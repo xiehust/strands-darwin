@@ -9,7 +9,7 @@ import { CaptureModel } from '../offline-model.js';
 
 class CollaborationModel extends CaptureModel {
   override async *stream(messages: Message[], options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
-    await appendFile('peer-requests.jsonl', JSON.stringify({ messages: messages.map(m => m.toJSON()), tools: options?.toolSpecs?.map(t => t.name) }) + '\n');
+    await appendFile('peer-requests.jsonl', JSON.stringify({ messages: messages.map(m => m.toJSON()), tools: options?.toolSpecs?.map(t => t.name) ?? [] }) + '\n');
     const last = messages.at(-1);
     const text = last?.content.find(block => block.type === 'textBlock')?.text ?? '';
     if (text === 'hold peer queue') {

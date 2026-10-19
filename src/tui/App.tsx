@@ -176,6 +176,8 @@ import {
   type TangentState,
 } from './tangent.js';
 import { clipboardImageFact, readClipboardImage } from './clipboard-image.js';
+import { PromptSuggestionState, suggestionRow, suggestionUnowned } from './prompt-suggestion.js';
+import { suggestionTail, suggestionUsageNotice, SUGGESTION_ANSWER_CODE_POINTS } from '../agent/prompt-suggestion.js';
 import { DRAFT_STASH_DROP_NOTICE, stashHint, toggleDraftStash, type DraftStash } from './draft-stash.js';
 import {
   delegationWakeEntries,
@@ -325,6 +327,17 @@ export function App({
   // meter, trajectory recorder, context estimate — moves to the new session together,
   // and the old session's numbers cannot leak into the new transcript.
   const [runtime, setRuntime] = useState(initialRuntime);
+  const suggestions = useRef(new PromptSuggestionState());
+  const [, redrawSuggestion] = useReducer((n: number) => n + 1, 0);
+  const suggestionReady = useRef<() => boolean>(() => false);
+  const shownSuggestion = useRef<string | undefined>(undefined);
+  const dismissSuggestion = useCallback(() => {
+    const visible = suggestions.current.candidate !== undefined;
+    suggestions.current.invalidate();
+    shownSuggestion.current = undefined;
+    if (visible) redrawSuggestion();
+  }, []);
+  useEffect(() => () => dismissSuggestion(), [runtime, dismissSuggestion]);
   const [state, recordAction] = useReducer(
     turnReducer,
     initialHistory,
@@ -357,6 +370,7 @@ export function App({
   const setStatus = useCallback((next: Status) => {
     editorPrefix.current = false;
     statusRef.current = next;
+    if (next !== 'idle') dismissSuggestion();
     setStatusState(next);
   }, []);
   const [workspacePaths, setWorkspacePaths] = useState<WorkspacePaths>(NO_WORKSPACE_PATHS);
@@ -402,6 +416,7 @@ export function App({
     const current = editorRef.current;
     const value = typeof next === 'function' ? next(current) : next;
     editorRef.current = value;
+    if (value.text !== current.text) dismissSuggestion();
     if (dismissedCompletionRef.current !== undefined && (
       value.text !== current.text || value.cursor.offset !== current.cursor.offset ||
       value.cursor.affinity !== current.cursor.affinity
@@ -416,6 +431,7 @@ export function App({
   const [attachedImage, setAttachedImageState] = useState<ImageBlock | undefined>(undefined);
   const attachedImageRef = useRef(attachedImage);
   const setAttachedImage = useCallback((next: ImageBlock | undefined) => {
+    dismissSuggestion();
     attachedImageRef.current = next;
     setAttachedImageState(next);
   }, []);
@@ -436,6 +452,7 @@ export function App({
   // A session replacement/unmount invalidates the result before killing its process.
   useEffect(() => () => discardDiff(), [runtime, discardDiff]);
   const exit = useCallback(() => {
+    dismissSuggestion();
     discardDiff();
     if (draftStashRef.current === undefined) { inkExit(); return; }
     setDraftStash(undefined);
@@ -532,6 +549,7 @@ export function App({
   const queuedRef = useRef(queued);
   const setQueued = useCallback((next: readonly QueuedPrompt[]) => {
     editorPrefix.current = false;
+    if (next.length > 0) dismissSuggestion();
     queuedRef.current = next;
     setQueuedState(next);
   }, []);
@@ -620,6 +638,7 @@ export function App({
   const pendingPermission = useSyncExternalStore(
     (onChange) => permissions.subscribe(() => {
       editorPrefix.current = false;
+      dismissSuggestion();
       onChange();
     }),
     permissions.getSnapshot,
@@ -634,7 +653,7 @@ export function App({
   // Background activity is independent of the foreground turn.
   // The manager publishes starts and terminal transitions, never output or ticks.
   const subscribeTaskActivity = useCallback(
-    (onChange: () => void) => runtime.subscribeToBackgroundTaskActivity(onChange), [runtime],
+    (onChange: () => void) => runtime.subscribeToBackgroundTaskActivity(() => { dismissSuggestion(); onChange(); }), [runtime, dismissSuggestion],
   );
   const readRunningTaskCount = useCallback(() => runtime.runningBackgroundTaskCount, [runtime]);
   const runningTaskCount = useSyncExternalStore(subscribeTaskActivity, readRunningTaskCount, readRunningTaskCount);
@@ -965,6 +984,33 @@ export function App({
     live: { wanted: liveTextRows === 0 ? 0 : liveTextRows + LIVE_BLOCK_CHROME_ROWS, floor: 0 },
   });
 
+  // Advisory text never competes for ownership or adds a frame row. Read mirrors on
+  // acceptance as well as render, so batched keys cannot accept yesterday's draft.
+  suggestionReady.current = () => runtime.config.promptSuggestions !== false && suggestionUnowned({
+    idle: statusRef.current === 'idle', draft: editorRef.current.text,
+    permission: permissions.current !== undefined,
+    search: historySearchRef.current !== undefined || rewindSearchRef.current !== undefined || recallRef.current !== undefined,
+    completion: promptCompletionState(editorRef.current, commandNames, workspacePaths).candidates.length > 0,
+    image: attachedImageRef.current !== undefined || imageTurnInFlight.current,
+    editor: editorActive.current || diffRun.current !== undefined,
+    queue: queuedRef.current.length > 0 || draining.current,
+    peer: (runtime.collaboration?.pending ?? 0) > 0,
+    goal: goalRef.current !== undefined,
+    task: runtime.runningBackgroundTaskCount > 0 || runtime.listBackgroundDelegations().length > 0,
+    replacing: clearing.current || !presentationMounted.current,
+  });
+  const candidate = suggestionReady.current() ? suggestions.current.candidate : undefined;
+  const candidateRow = suggestionRow(candidate, columns, grants.prompt);
+  useLayoutEffect(() => {
+    shownSuggestion.current = undefined;
+    let live = true;
+    const revision = suggestions.current.revision;
+    if (candidateRow !== undefined) void waitUntilRenderFlush().then(() => {
+      if (live && revision === suggestions.current.revision && suggestionReady.current()) shownSuggestion.current = candidate;
+    });
+    return () => { live = false; shownSuggestion.current = undefined; };
+  }, [candidate, candidateRow, columns, grants.prompt, runtime, waitUntilRenderFlush]);
+
   // A changed viewport starts review over. An Enter may acknowledge only a page
   // flushed by Ink, never a newly selected rule or an unrendered next page.
   const activeRuleReview = useMemo(() => reviewing === undefined ? undefined : {
@@ -1216,6 +1262,9 @@ export function App({
       if (goalRef.current !== undefined) setGoal(goalBeforeTurn(goalRef.current, goalKind));
       let lifecycleOutcome: 'success' | 'failure' | 'cancelled' = 'success';
       setStatus('streaming');
+      const suggestionRevision = suggestions.current.revision;
+      let suggestionAnswer = '';
+      let suggestionCompleted = false;
       try {
         await runWithStreamResumption(
           text,
@@ -1227,6 +1276,12 @@ export function App({
               turnInput === text ? image : undefined,
               origin,
             )) {
+              if (runtime.config.promptSuggestions !== false && goalKind === 'user') {
+                if (event.type === 'modelMessageEvent') {
+                  // Post-redaction, parent text only; no tool results or reasoning.
+                  suggestionAnswer = suggestionTail(event.message.content.map(block => block.type === 'textBlock' ? block.text : '').join(''), SUGGESTION_ANSWER_CODE_POINTS);
+                } else if (event.type === 'agentResultEvent') suggestionCompleted = event.result.stopReason === 'endTurn';
+              }
               // The bounded record a `/goal` check may read: observed, never re-read.
               if (goalRef.current !== undefined) {
                 if (event.type === 'contentBlockEvent' && event.contentBlock.type === 'textBlock') {
@@ -1422,6 +1477,20 @@ export function App({
         applyGoalTransition(goalAfterTurn(goalNow, goalKind, !failed ? 'completed' : lifecycleOutcome === 'cancelled' ? 'cancelled' : 'failed'));
       }
 
+      if (!failed && suggestionCompleted && goalKind === 'user' && image === undefined &&
+          !/^[!/]/u.test(userInput.trim()) && suggestionAnswer !== '' && suggestionReady.current()) {
+        const config = runtime.config;
+        const key = JSON.stringify([config.provider, config.model, config.region, config.openaiApi,
+          config.baseUrl, config.apiKeyEnv, config.bedrockMantle, config.bedrockRuntime, runtime.thinking.effective]);
+        void suggestions.current.offer(suggestionRevision, key,
+          signal => runtime.suggestPrompt(userInput, suggestionAnswer, signal),
+          (result, suspension) => {
+            if (!presentationMounted.current) return;
+            dispatch({ type: 'notice', text: suggestionUsageNotice(result, `${config.provider}/${config.model}`) });
+            if (suspension !== undefined) dispatch({ type: 'notice', text: suspension, severity: 'warn' });
+            redrawSuggestion();
+          });
+      }
       return !failed;
     },
     [applyGoalTransition, prepareAnswerClose, returnQueuedToEditor, runtime, setGoal, setTangent, waitUntilRenderFlush],
@@ -1429,6 +1498,7 @@ export function App({
 
   const submit = useCallback(
     async (raw: string, queuedEntry?: QueuedPrompt) => {
+      dismissSuggestion();
       editorPrefix.current = false;
       const text = raw.trim();
       const diff = parseDiffCommand(text);
@@ -2456,6 +2526,7 @@ export function App({
     if (!local) return;
     let previous = 0;
     const changed = () => {
+      if (local.pending > 0) dismissSuggestion();
       editorPrefix.current = false;
       for (const text of local.takeNotices()) dispatch({ type: 'notice', text });
       if (local.pending > previous) dispatch({ type: 'notice', text: `peer queued · ${local.pending}/8; held until idle after user/task queue and permissions. /collaborate off disables collaboration.` });
@@ -3056,6 +3127,9 @@ export function App({
   }, [exit, pendingPermission, permissions, runtime, status]);
 
   useInput((typed, key) => {
+    const hadSuggestion = suggestions.current.candidate !== undefined;
+    const plainRight = key.rightArrow && !key.ctrl && !key.meta && !key.shift;
+    if (!plainRight) dismissSuggestion();
     const armedEditorPrefix = editorPrefix.current;
     editorPrefix.current = false;
     // Esc Esc chord (SER-059) bookkeeping: every key disarms it, and only the
@@ -3216,6 +3290,7 @@ export function App({
     // editor, submits, dispatches, or changes the queue/runtime. The dismissed query
     // is read from the immediate editor mirror so batched Escape/text is coherent.
     if (key.escape) {
+      if (hadSuggestion) return;
       const { completion: currentCompletion, candidates: visible } = currentPromptCompletions();
       if (visible.length > 0 && currentCompletion.identity !== undefined) {
         setDismissedCompletion(currentCompletion.identity);
@@ -3428,6 +3503,15 @@ export function App({
       return;
     }
 
+    if (plainRight && suggestionReady.current() && shownSuggestion.current !== undefined &&
+        shownSuggestion.current === suggestions.current.candidate &&
+        suggestionRow(shownSuggestion.current, columns, grants.prompt) !== undefined) {
+      const text = shownSuggestion.current;
+      dismissSuggestion();
+      setEditor({ text, cursor: { offset: text.length, affinity: 'upstream' } });
+      preferredColumn.current = undefined;
+      return;
+    }
     if (key.leftArrow || key.rightArrow) {
       setEditor((current) => ({
         ...current,
@@ -3502,6 +3586,7 @@ export function App({
   });
 
   usePaste((pasted) => {
+    dismissSuggestion();
     editorPrefix.current = false;
     // Permission and compaction own all input while visible/busy, including paste.
     if (pendingPermission !== undefined || status === 'compacting') return;
@@ -3574,6 +3659,7 @@ export function App({
         ) : (
           <InputBox
             layout={layout}
+            suggestion={candidateRow}
             completions={completions}
             completionKind={completionKind}
             completionNote={completionNote}

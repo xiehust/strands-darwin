@@ -141,6 +141,7 @@ import {
 } from './prompt-cache.js';
 import { isRefusalStop } from './refusal.js';
 import { goalCheckConfig, runGoalCheck, type GoalVerdict } from './goal-check.js';
+import { runPromptSuggestion, type SuggestionResult } from './prompt-suggestion.js';
 import { readSessionLabel } from './session-label.js';
 import { writeSessionLabel } from './session-label-write.js';
 import { createModelClassifier } from './safety-classifier.js';
@@ -654,6 +655,21 @@ export class AgentRuntime {
   private rewindCaptureTail: Promise<void> = Promise.resolve();
   /** Lazily built model for the `/goal` condition check (SER-108); never shared with the agent. */
   private goalCheckModel: { readonly key: string; readonly model: Promise<Model> } | undefined = undefined;
+  private suggestionAbort: AbortController | undefined;
+
+  /** Interactive driver only. Does not touch Agent messages, metering, tools or records. */
+  async suggestPrompt(user: string, assistant: string, signal: AbortSignal): Promise<SuggestionResult> {
+    if (this.config.promptSuggestions === false || this.labelClosed || signal.aborted) return { cancelled: true };
+    this.suggestionAbort?.abort();
+    const controller = new AbortController();
+    this.suggestionAbort = controller;
+    try {
+      return await runPromptSuggestion(runtimeModelFactory, { ...this.config, thinkingEffort: this.thinking.effective ?? this.config.thinkingEffort }, user, assistant,
+        AbortSignal.any([signal, controller.signal]));
+    } finally {
+      if (this.suggestionAbort === controller) this.suggestionAbort = undefined;
+    }
+  }
   /** The one MCP prompt discovery this process took (SER-114); handed to successors. */
   private mcpPromptDiscovery: McpPromptDiscovery = { listings: [] };
   /** Offered MCP prompt commands, named against this session's skills/custom commands. */
@@ -1391,6 +1407,7 @@ export class AgentRuntime {
     image?: ImageBlock,
     origin?: TaskNotificationFields | PeerInput,
   ): AsyncIterable<AgentStreamEvent> {
+    this.suggestionAbort?.abort();
     const peer = origin !== undefined && 'kind' in origin ? origin : undefined;
     if (peer) { this.collaboration.beginPeerTurn(peer); userInput = peerPrompt(peer); }
     else if (origin === undefined) this.collaboration.beginHumanTurn();
@@ -1909,6 +1926,7 @@ export class AgentRuntime {
    * cache breakpoint (switching thinking *modes* would).
    */
   changeThinkingEffort(effort: ThinkingEffort): ThinkingChangeResult {
+    this.suggestionAbort?.abort();
     const before = this.thinkingPlan.effective;
     this.thinkingPlan = applyThinkingEffort(this.model, this.liveConfig, effort);
     // Only a change in what is actually sent alters the request; a clamped or
@@ -2001,6 +2019,7 @@ export class AgentRuntime {
    * describe a model that is no longer there.
    */
   async changeModel(target: ModelChoice): Promise<ModelChangeResult> {
+    this.suggestionAbort?.abort();
     await this.refreshCloudPolicy();
     const next = withModelChoice(this.liveConfig, target);
     // Built before anything is mutated: a failure here (a missing peer dependency,
@@ -2637,6 +2656,7 @@ export class AgentRuntime {
    */
   private async retire(): Promise<void> {
     this.labelClosed = true;
+    this.suggestionAbort?.abort();
     this.collaboration.close('session retired by clear/rewind');
     // `/clear` and rewind retire the session before any still-pending closing append
     // may accept memory. Already accepted commits are unaffected and still awaited.
@@ -2772,6 +2792,7 @@ export class AgentRuntime {
    */
   async shutdown(options: { throwOnError?: boolean } = {}): Promise<void> {
     this.labelClosed = true;
+    this.suggestionAbort?.abort();
     // Synchronous retirement first; the hub's bounded unregister flush is awaited with the rest.
     const collaborationClosed = this.collaboration.close('shutdown');
     this.cloudMemory?.cancel();

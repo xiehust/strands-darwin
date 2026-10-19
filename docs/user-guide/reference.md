@@ -330,10 +330,11 @@ Rules and limits:
 | `Enter` | accept selected completion, otherwise send/queue |
 | `Ctrl+J`, trailing `\` + `Enter` | newline; multiline paste keeps all lines |
 | `Tab` | accept selected completion |
+| plain `Right` | when an empty composer visibly shows a complete next-prompt suggestion, copy it into the editable draft only; separate Enter sends. Hidden suggestions cannot be accepted; otherwise ordinary cursor movement |
 | `Up` / `Down` | menu first; then queue take-back, recall, or multiline cursor |
 | `Ctrl+R` | search project prompts; type or paste to filter (256 Unicode code points), `Ctrl+R`/`Up`/`Down` navigate, `Enter`/`Tab` accept raw text without sending, `Escape` restores draft/cursor; [single-row previews](using-darwin.md#prompt-editing-and-completion) |
-| `Escape` | close current completion menu or end recall; preserve draft/cursor (permission prompt still denies) |
-| `Esc` `Esc` | on an empty idle composer (no draft, turn, `!` command, queue or prompt), a second `Esc` within 500 ms opens the `/rewind` chooser — same behavior as typing `/rewind`; one `Esc` there does nothing |
+| `Escape` | dismiss a next-prompt suggestion, close current completion menu or end recall; preserve draft/cursor (permission prompt still denies) |
+| `Esc` `Esc` | on an empty idle composer (no draft, turn, `!` command, queue or prompt), a second `Esc` within 500 ms opens the `/rewind` chooser — same behavior as typing `/rewind`; one `Esc` dismisses a shown suggestion, otherwise does nothing |
 | `Home` / `End`, `Ctrl+A` / `Ctrl+E` | visible-row start/end |
 | `Ctrl+Home` / `Ctrl+End` | whole raw draft start/end (including multiline and soft wraps); no submit |
 | `Backspace` / `Delete` | remove the preceding/following raw grapheme; if neighbors join, the caret advances to the first boundary at or after the deletion point |
@@ -352,6 +353,10 @@ Rules and limits:
 | `Ctrl+D` | quit |
 
 Permission and compaction views own keyboard/paste while active and ignore paste. Otherwise an open rewind/history search receives pasted text as a bounded query, never as draft edits or acceptance keys; only explicit Enter/Tab accepts. The completion menu owns arrows before recall/cursor. Prompt queue take-back wins before recall.
+
+### Prompt suggestions
+
+`promptSuggestions: true` is the default root/session setting; `false` independently disables all suggestion calls/timers. One transient candidate may follow an eligible interactive human turn. Current model/provider, no tools or workspace reads, 2,000 user/4,000 assistant code points, 256 output tokens, 10-second deadline, 160-code-point candidate. Typing/Escape dismisses; higher-priority composer/session owners win. Three same-cause failures suspend attempts with a reason until meaningful model state changes or restart. Auxiliary raw token/cache counts are live-only and separate from Agent spend; missing values are unknown, not zero. See [full behavior and exclusions](using-darwin.md#next-prompt-suggestions).
 
 ## Report contracts
 

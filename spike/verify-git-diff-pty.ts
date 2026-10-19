@@ -20,7 +20,7 @@ const cwd = path.join(root, 'project');
 const bin = path.join(root, 'bin');
 for (const dir of [home, cwd, bin]) await mkdir(dir);
 await mkdir(path.join(home, '.darwin'));
-await writeFile(path.join(home, '.darwin/config.json'), JSON.stringify({ diagnostics: true }));
+await writeFile(path.join(home, '.darwin/config.json'), JSON.stringify({ diagnostics: true, promptSuggestions: false }));
 const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
 // Keep runner Git/LFS configuration out of fixture setup and the real executable.
 // The viewer deliberately strips GIT_*, so passing these only to the TUI is insufficient.

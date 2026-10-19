@@ -22,6 +22,7 @@ await mkdir(path.join(home, '.darwin'), { recursive: true });
 await mkdir(cwd);
 await writeFile(path.join(home, '.darwin/config.json'), JSON.stringify({
   preserveRecentMessages: 1,
+  promptSuggestions: false,
 }));
 const tui = startTui({ cwd, cols: 60, rows: 20,
   entry: path.join(REPO_ROOT, 'spike/fixtures/composer-yank-cli.ts'),

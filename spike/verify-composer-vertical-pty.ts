@@ -30,7 +30,7 @@ const cwd = path.join(root, 'project');
 const home = path.join(root, 'home');
 await mkdir(cwd);
 await mkdir(path.join(home, '.darwin'), { recursive: true });
-await writeFile(path.join(home, '.darwin/config.json'), JSON.stringify({ preserveRecentMessages: 1 }));
+await writeFile(path.join(home, '.darwin/config.json'), JSON.stringify({ preserveRecentMessages: 1, promptSuggestions: false }));
 const tui = startTui({ cwd, cols: 70, rows: 24,
   entry: path.join(REPO_ROOT, 'spike/fixtures/composer-yank-cli.ts'),
   env: { HOME: home, DARWIN_MODEL_PRICES_FETCH: 'off', AWS_EC2_METADATA_DISABLED: 'true' },

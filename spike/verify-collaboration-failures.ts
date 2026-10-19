@@ -286,7 +286,7 @@ try {
   if (section === undefined || section === 'discovery') await discoveryAndGrammar();
   if (section !== 'discovery') {
     mkdirSync(path.join(home, '.darwin'), { mode: 0o700, recursive: true });
-    writeFileSync(path.join(home, '.darwin/config.json'), JSON.stringify({ provider: 'bedrock', model: 'fake.offline-capture', region: 'us-west-2', promptCache: false, contextOffload: false, memory: false, permissionMode: 'yolo' }));
+    writeFileSync(path.join(home, '.darwin/config.json'), JSON.stringify({ provider: 'bedrock', model: 'fake.offline-capture', region: 'us-west-2', promptCache: false, contextOffload: false, memory: false, permissionMode: 'yolo', promptSuggestions: false }));
     if (section === undefined || section === 'tui') await tuiFailures();
     if (section === undefined || section === 'headless') await headlessFailures();
   }

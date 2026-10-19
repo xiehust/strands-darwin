@@ -14,6 +14,8 @@ const suites = [
   '../hub/spike/verify-close-order.ts',
   'verify-hub-transport.ts',
   'verify-prompt-editor.ts',
+  'verify-prompt-suggestion.ts',
+  'verify-prompt-suggestion-pty.ts',
   'verify-composer-yank.ts',
   'verify-draft-stash.ts',
   'verify-composer-stash.ts',

@@ -294,6 +294,8 @@ export interface SessionFields {
    * the resolved boolean.
    */
   backgroundTaskWake?: boolean;
+  /** Interactive next-prompt side call; default on, false makes no calls or timers. */
+  promptSuggestions?: boolean;
   /**
    * Check npm for a newer `strands-darwin` when the interactive TUI starts (at most
    * once per 24h, cached in `~/.darwin/update-check.json`, see `update-check.ts`) and
@@ -448,6 +450,7 @@ export const SESSION_KEYS = [
   'terminalNotify',
   'terminalTitle',
   'backgroundTaskWake',
+  'promptSuggestions',
   'updateCheck',
   'trustPeers',
   'shellEnv',
@@ -507,6 +510,7 @@ const DEFAULTS = {
   terminalNotify: false,
   terminalTitle: true,
   backgroundTaskWake: true,
+  promptSuggestions: true,
   updateCheck: true,
   trustPeers: false,
   memory: true,
@@ -1269,6 +1273,8 @@ function validateSessionFields(
       booleanField(input, 'terminalTitle', configPath) ?? DEFAULTS.terminalTitle,
     backgroundTaskWake:
       booleanField(input, 'backgroundTaskWake', configPath) ?? DEFAULTS.backgroundTaskWake,
+    promptSuggestions:
+      booleanField(input, 'promptSuggestions', configPath) ?? DEFAULTS.promptSuggestions,
     updateCheck:
       booleanField(input, 'updateCheck', configPath) ?? DEFAULTS.updateCheck,
     trustPeers:
@@ -2029,18 +2035,24 @@ async function readConfigRecord(
  * require peer dependencies (`@anthropic-ai/sdk`, `openai`) that a Bedrock-only
  * install does not have. A static import would break the default setup.
  */
-export async function createModelFromConfig(config: AppConfig): Promise<Model> {
+/** Internal side-call transport policy, never a user config or an Agent retry policy. */
+export interface ModelCallOptions {
+  readonly singleAttempt?: boolean;
+  readonly cancelSignal?: AbortSignal;
+}
+
+export async function createModelFromConfig(config: AppConfig, call: ModelCallOptions = {}): Promise<Model> {
   switch (config.provider) {
     case 'bedrock':
-      return createBedrockModel(config);
+      return createBedrockModel(config, call);
     case 'anthropic':
-      return createAnthropicModel(config);
+      return createAnthropicModel(config, call);
     case 'openai':
-      return createOpenAIModel(config);
+      return createOpenAIModel(config, call);
   }
 }
 
-function createBedrockModel(config: AppConfig): Model {
+function createBedrockModel(config: AppConfig, call: ModelCallOptions): Model {
   if (!BEDROCK_PROFILE_PREFIXES.some((prefix) => config.model.startsWith(prefix))) {
     throw new ConfigError(
       `Bedrock model ${JSON.stringify(config.model)} is not a cross-region inference profile. ` +
@@ -2065,6 +2077,7 @@ function createBedrockModel(config: AppConfig): Model {
     // default has been outlived by real turns, so darwin owns the number.
     clientConfig: {
       requestHandler: { requestTimeout: config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS },
+      ...(call.singleAttempt && { maxAttempts: 1 }),
     },
     // Appends a cache point after the tool schemas and to the last user message on
     // every request. Omitted entirely when caching is off, since `strategy: 'auto'`
@@ -2077,7 +2090,7 @@ function createBedrockModel(config: AppConfig): Model {
   });
 }
 
-async function createAnthropicModel(config: AppConfig): Promise<Model> {
+async function createAnthropicModel(config: AppConfig, call: ModelCallOptions): Promise<Model> {
   // Config is validated before the import: a mistake in the user's own file is
   // reported whether or not the optional peer dependency happens to be installed.
   const apiKey = readApiKey(config);
@@ -2113,12 +2126,20 @@ async function createAnthropicModel(config: AppConfig): Promise<Model> {
     // The pinned provider does not forward StreamOptions.cancelSignal. The
     // client's supported middleware carries only the scoped parent stream
     // signal; outside that scope (children/counting) it delegates unchanged.
-    clientConfig: { ...(baseURL !== undefined && { baseURL }), middleware: [modelStreamMiddleware] },
+    clientConfig: {
+      ...(baseURL !== undefined && { baseURL }),
+      ...(call.singleAttempt && { maxRetries: 0 }),
+      middleware: [call.cancelSignal === undefined ? modelStreamMiddleware : (request, next, context) => {
+        const signal = AbortSignal.any([call.cancelSignal!, ...(request.signal ? [request.signal] : [])]);
+        if (context.options !== undefined) context.options.signal = signal;
+        return next({ ...request, signal });
+      }],
+    },
     ...(thinking !== undefined && { params: thinking as Record<string, unknown> }),
   });
 }
 
-async function createOpenAIModel(config: AppConfig): Promise<Model> {
+async function createOpenAIModel(config: AppConfig, call: ModelCallOptions): Promise<Model> {
   const { OpenAIModel } = await importProviderModule<typeof import('@strands-agents/sdk/models/openai')>(
     '@strands-agents/sdk/models/openai',
     'openai',
@@ -2149,6 +2170,7 @@ async function createOpenAIModel(config: AppConfig): Promise<Model> {
     maxTokens: config.maxTokens,
     ...(contextWindowLimit === undefined ? {} : { contextWindowLimit }),
     ...client,
+    ...(call.singleAttempt && { clientConfig: { ...('clientConfig' in client ? client.clientConfig : {}), maxRetries: 0 } }),
     ...(params !== undefined && { params }),
   };
 

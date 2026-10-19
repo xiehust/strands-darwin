@@ -57,7 +57,7 @@ await mkdir(path.join(home, '.darwin'), { recursive: true, mode: 0o700 });
 await mkdir(cwd);
 await mkdir(tmp, { mode: 0o700 });
 await mkdir(bin);
-await writeFile(path.join(home, '.darwin/config.json'), JSON.stringify({ preserveRecentMessages: 1 }));
+await writeFile(path.join(home, '.darwin/config.json'), JSON.stringify({ preserveRecentMessages: 1, promptSuggestions: false }));
 
 const editor = path.join(bin, 'fixture editor');
 await writeFile(editor, `#!${process.execPath}

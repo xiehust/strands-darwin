@@ -252,6 +252,46 @@ pins exact image object identity and defensive conflicts.
 
 **The shared normalizer caps every image at 2000px on either edge, not the 8000px single-image limit.** Anthropic applies the stricter per-image limit to every image in a request that carries more than 20 image blocks, and tool-result images from earlier turns are resent with each request — so a session that keeps calling `imageViewer` eventually crosses 20 and, with one 8000px-era image in history, fails every later turn (`image dimensions exceed max allowed size for many-image requests: 2000 pixels`). Anything past the cap becomes a ≤2000px WebP; 2000px itself passes through byte-identical. Because snapshots saved under the old cap still hold oversized bytes, `create()` runs `normalizeRestoredImages(agent.messages)` right after the reasoning repair: the same decoder/normalizer, applied in memory to `ImageBlock`s in user content and `toolResultBlock` content, compliant and undecodable blocks left as they are, block order and message identity preserved; the next ordinary save persists it and the trajectory is never rewritten. Required check: `spike/verify-image-viewer.ts` (in `pnpm test`).
 
+## Prompt suggestions — transient human-owned text, never a turn
+
+SER-129 uses the same bounded SDK `Model.streamAggregated` seam as `/goal`, not its
+classifier selection or continuation. Only the interactive App's successful `endTurn`
+for a human text prompt can offer one attempt. It observes the latest post-redaction
+`modelMessageEvent` text, not workspace/tool/child reasoning, and leaves direct driver
+streaming untouched. Input tails are capped at 2,000 user/4,000 assistant code points
+with omission markers. A separate current-provider/model/effort instance has cache
+points disabled, output 256 tokens, serialized deltas 8 KiB and a 10-second deadline
+including construction. The factory's internal one-attempt transport option sets AWS
+`maxAttempts: 1` or client `maxRetries: 0`; Anthropic's public middleware forwards the
+side-call signal because the pinned model adapter drops it. No Agent, tools, hooks,
+scheduler, file reads, retry, provider switch or main context/meter mutation.
+
+`promptSuggestions` defaults on; false returns before constructing a model or timer.
+Headless/children never call the suggestion method automatically. Refused/failed/cancelled,
+image, command, queue-drained and session-originated turns are excluded. A live-only
+notice reports raw auxiliary input/output/cache counters, missing as `not reported`,
+separate from Agent spend; no dollar, free-call or warm-cache claim. Cancellation may
+leave actual spend unknown. The candidate and notice create no trajectory/replay/recall,
+memory evidence or resumability changes. Only ordinary Enter produces a human send.
+
+App-scoped immediate revision/candidate/abort state outlives clear/rewind for repeated
+failure suppression, not content. Three normalized same-cause failures suspend attempts
+with a reason until provider/model/API/region/effective effort changes or restart;
+cancelled/stale work never increments that count. Every user action other than plain
+Right invalidates, as do work/permission/peer/task ownership and runtime replacement.
+Eligibility reads immediate editor and owner refs; typing then erasing cannot resurrect
+an old result. Permission/search/completion/editor/image/queue/peer/task/goal owners win.
+
+The candidate is dim labelled text in the existing empty draft row, never editor text
+or an extra frame participant. The full candidate and Right hint must fit the granted
+row and width; otherwise nothing is offered. Acceptance requires both a flushed visible
+candidate and current ownership, revision, empty immediate editor and size. Plain Right
+copies unsent; Enter remains separate. Modified arrows/nonempty drafts retain existing
+movement. No terminal focus tracking, recap or startup Git-history suggestion.
+
+Checks: `verify-prompt-suggestion.ts` and `verify-prompt-suggestion-pty.ts` in `pnpm test`,
+plus existing composer/queue/goal/permission/resume/streaming checks.
+
 ## Direct driver streaming
 
 **Successful turns are public as their ordinary SDK events arrive; there is no whole-turn output

@@ -4966,6 +4966,8 @@ async function clipboardImageComposer(): Promise<void> {
 async function goalLoop(): Promise<void> {
   header('TUI — /goal: cap, check, cancel, permission, queue, live state');
   await resetWorkDir();
+  // This ledger isolates goal checks from other optional inference (SER-129).
+  await writeHomeConfig({ promptSuggestions: false });
   const entry = path.join(REPO_ROOT, 'spike', 'fixtures', 'goal-cli.ts');
   const eventsFile = path.join(WORK_DIR, 'goal-events.log');
   const controlFile = path.join(WORK_DIR, 'goal-control.json');

@@ -28,7 +28,7 @@ const bin = path.join(root, 'bin');
 await mkdir(path.join(home, '.darwin'), { recursive: true, mode: 0o700 });
 await mkdir(cwd);
 await mkdir(bin);
-await writeFile(path.join(home, '.darwin/config.json'), JSON.stringify({ preserveRecentMessages: 1,
+await writeFile(path.join(home, '.darwin/config.json'), JSON.stringify({ preserveRecentMessages: 1, promptSuggestions: false,
   models: [
     { enable: true, name: 'first', provider: 'bedrock', model: 'fake.stash-first', region: 'us-west-2' },
     { enable: false, name: 'second', provider: 'bedrock', model: 'fake.stash-second', region: 'us-west-2' },

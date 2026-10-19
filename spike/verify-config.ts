@@ -1672,6 +1672,7 @@ async function documentedKeys(): Promise<void> {
     terminalNotify: false,
     terminalTitle: true,
     backgroundTaskWake: true,
+    promptSuggestions: true,
     updateCheck: true,
     trustPeers: false,
     shellEnv: { passthrough: ['NPM_TOKEN', 'STRIPE_*'] },

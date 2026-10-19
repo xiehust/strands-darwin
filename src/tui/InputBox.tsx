@@ -89,6 +89,7 @@ function hiddenSearchNotice(hiddenAbove: number, hiddenBelow: number): string {
 
 export function InputBox({
   layout,
+  suggestion,
   completions,
   completionKind,
   completionNote,
@@ -105,6 +106,8 @@ export function InputBox({
   maxRows,
 }: {
   readonly layout: EditorLayout;
+  /** Fully visible advisory text in an empty draft row; never editor content. */
+  readonly suggestion?: string | undefined;
   readonly completions: readonly string[];
   readonly completionKind: CompletionKind;
   /**
@@ -212,7 +215,7 @@ export function InputBox({
             {/* Both markers occupy five cells; editor wrapping and cursor stay unchanged. */}
             {shellMode && row.prefix === 'you> ' ? 'cmd> ' : row.prefix}
           </Text>
-          <Text dimColor={!editable} wrap="truncate-end">{row.text}</Text>
+          <Text dimColor={!editable || suggestion !== undefined} wrap="truncate-end">{suggestion ?? row.text}</Text>
         </Box>
       ))}
 
