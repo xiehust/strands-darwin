@@ -147,8 +147,8 @@ P3 (Codex official CLI review scopes) documents merge-base branch review. `src/c
 - Importance: 5
 - Architecture fit: 5
 - Evidence confidence: 5
-- Implementation difficulty: 4
-- Implementation risk: 4
+- Difficulty: 4
+- Risk: 4
 - Origin report: [`research_2026-10-19.md`](../research_2026-10-19.md) (run `03:29:56Z`)
 
 ### Implementation / acceptance evidence
@@ -162,4 +162,3 @@ The SDK-path release check found installed/pinned 1.20.0 and newest TypeScript S
 Update the exact SDK pin, lockfile and `pnpm-workspace.yaml`; rebase `patches/@strands-agents__sdk@1.20.0.patch` onto 1.21.0, retaining every local contract unless proven redundant upstream. The new patch is the source of truth; `pnpm build` regenerates `dist/patches/`. Honor pnpm's `minimumReleaseAge` without bypass. Preserve the current conversation manager, durable session-local offloader/legacy repair, child isolation, permission gate, provider reasoning/usage, shell/file-editor behavior and bounded MCP prompt requests. New SDK stash/model/tool APIs are not authorization to change defaults or broaden child access.
 
 Acceptance: explicit base/result diff and patch inventory; `pnpm typecheck` + every `pnpm test` suite; all load-bearing rows citing the pinned SDK patch (focused checks outside the runner as applicable); `pnpm tsx spike/verify-npm-package.ts` against the registry; post-acceptance `pnpm build`. Record any unexecuted live check rather than claiming it. Keep README languages, relevant guide narrative/reference and architecture accurate. Origin report R1–R4 identifies source symbols, existing tests and scope. Implementation uses a fresh `developer` child; Host independently verifies, logs the session/checks/spend, and alone changes this status to `done`.
-
