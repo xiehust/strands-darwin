@@ -166,3 +166,28 @@ The SDK-path release check found installed/pinned 1.20.0 and newest TypeScript S
 Update the exact SDK pin, lockfile and `pnpm-workspace.yaml`; rebase `patches/@strands-agents__sdk@1.20.0.patch` onto 1.21.0, retaining every local contract unless proven redundant upstream. The new patch is the source of truth; `pnpm build` regenerates `dist/patches/`. Honor pnpm's `minimumReleaseAge` without bypass. Preserve the current conversation manager, durable session-local offloader/legacy repair, child isolation, permission gate, provider reasoning/usage, shell/file-editor behavior and bounded MCP prompt requests. New SDK stash/model/tool APIs are not authorization to change defaults or broaden child access.
 
 Acceptance: explicit base/result diff and patch inventory; `pnpm typecheck` + every `pnpm test` suite; all load-bearing rows citing the pinned SDK patch (focused checks outside the runner as applicable); `pnpm tsx spike/verify-npm-package.ts` against the registry; post-acceptance `pnpm build`. Record any unexecuted live check rather than claiming it. Keep README languages, relevant guide narrative/reference and architecture accurate. Origin report R1–R4 identifies source symbols, existing tests and scope. Implementation uses a fresh `developer` child; Host independently verifies, logs the session/checks/spend, and alone changes this status to `done`.
+
+
+## SER-128 — Keep composer Up/Down coherent across batched terminal input by using the current draft and cursor for every move
+
+- Status: `not-started`
+- Priority: 168
+- Score: 12
+- Importance: 3
+- Architecture fit: 5
+- Evidence confidence: 5
+- Difficulty: 2
+- Risk: 2
+- Origin report: [`research_2026-10-19.md`](../research_2026-10-19.md) (run `09:40:46Z`)
+
+### Implementation / acceptance evidence
+
+Not implemented. Host reproduced at `5f3240f4c5a20fdc368786bf5318c9f0ca08590b`: paste `aaa\nbbb\nccc\nddd`, then send Up+Up+`!` in one terminal write; the CLI inserts after `ccc`, not `bbb`. No model call occurs. Research report R2–R6 links source, existing tests and the offline PTY artifacts.
+
+### Notes / blockers / abandonment reason
+
+Requirement: make each ordinary composer Up/Down use the synchronous current editor value, not `App`'s render-captured `layout`. Reuse `layoutEditor`/`moveVertical`, preserve preferred-column behavior and grapheme/soft-wrap affinity, and keep existing precedence: permission/compaction/search owners, then completion, queue take-back, recall, ordinary movement. No new key, UI row, timer, send/queue behavior, SDK loop, dependency or config surface.
+
+Acceptance: register an offline real-CLI PTY regression with repeated Up and Down in one write and exact insertion witnesses; cover mixed preceding cursor/text changes, multiline plus soft-wrapped Unicode at ordinary/narrow widths, preferred-column retention and no unintended model invocation. Verify neighboring completion/queue/recall/search/permission ownership using new or existing focused checks. Child and Host independently run `pnpm typecheck` + `pnpm test`; Host inspects explicit base/result diffs, reruns the focused reproduction, checks README/guide/architecture accuracy, and runs `pnpm build`. Each requirement gets a test in the child's checklist. Host alone closes status after acceptance and appends the supervision session, commit, checks and spend to `docs/iteration-log.md`.
+
+No dependency on another new direction. Selection score remains 12 ≥ 6. Keep the implementation inside one fresh developer child; no Host implementation patching.
