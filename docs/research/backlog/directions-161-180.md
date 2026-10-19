@@ -138,3 +138,28 @@ Host acceptance task `bg-3f3756c3-e709-4aff-bac4-f53c7bdb6f28` exited 0: `pnpm t
 ### Notes / blockers / abandonment reason
 
 P3 (Codex official CLI review scopes) documents merge-base branch review. `src/commands/review-command.ts::parseReviewCommand` currently recognizes only full-SHA `--commit`; a leading `--base` becomes literal focus on the working-tree prompt. Add `/review --base <40-hex-SHA>` for the unique merge-base-to-HEAD committed diff, without Git execution during expansion. Preserve existing bare/focus/commit bytes and commit-only usage. Malformed base forms return base-specific local usage in every driver before queue/model work; valid forms retain ordinary queue/image ownership and literal trajectory. Prompt names resolved object identities, excludes dirty/untracked changes, handles missing/unrelated/ambiguous/empty scopes honestly, and asks for no fetch/checkout/edit/commit. It remains guidance, not enforced read-only. No new tools, modes, dependencies, config or loop. Full requirements, test matrix, docs and authorization are in the report. Score 13 clears gate 6; no new-direction dependency. Host owns research/backlog/log and push; use a fresh developer child.
+
+## SER-127 — Upgrade the pinned Strands SDK to 1.21.0 while preserving Darwin's patched contracts and runtime defaults
+
+- Status: `not-started`
+- Priority: 167
+- Score: 12
+- Importance: 5
+- Architecture fit: 5
+- Evidence confidence: 5
+- Implementation difficulty: 4
+- Implementation risk: 4
+- Origin report: [`research_2026-10-19.md`](../research_2026-10-19.md) (run `03:29:56Z`)
+
+### Implementation / acceptance evidence
+
+Not started. Independent acceptance is required before closure.
+
+### Notes / blockers / abandonment reason
+
+The SDK-path release check found installed/pinned 1.20.0 and newest TypeScript SDK release [typescript/v1.21.0](https://github.com/strands-agents/harness-sdk/releases/tag/typescript%2Fv1.21.0), published 2026-10-14T20:07:44Z (accessed 2026-10-19). This is the batch's first and only accepted direction, not a re-opening of a prior version upgrade.
+
+Update the exact SDK pin, lockfile and `pnpm-workspace.yaml`; rebase `patches/@strands-agents__sdk@1.20.0.patch` onto 1.21.0, retaining every local contract unless proven redundant upstream. The new patch is the source of truth; `pnpm build` regenerates `dist/patches/`. Honor pnpm's `minimumReleaseAge` without bypass. Preserve the current conversation manager, durable session-local offloader/legacy repair, child isolation, permission gate, provider reasoning/usage, shell/file-editor behavior and bounded MCP prompt requests. New SDK stash/model/tool APIs are not authorization to change defaults or broaden child access.
+
+Acceptance: explicit base/result diff and patch inventory; `pnpm typecheck` + every `pnpm test` suite; all load-bearing rows citing the pinned SDK patch (focused checks outside the runner as applicable); `pnpm tsx spike/verify-npm-package.ts` against the registry; post-acceptance `pnpm build`. Record any unexecuted live check rather than claiming it. Keep README languages, relevant guide narrative/reference and architecture accurate. Origin report R1–R4 identifies source symbols, existing tests and scope. Implementation uses a fresh `developer` child; Host independently verifies, logs the session/checks/spend, and alone changes this status to `done`.
+
