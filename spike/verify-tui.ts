@@ -782,13 +782,17 @@ async function compactingInputOwnership(): Promise<void> {
 
   try {
     await tui.waitFor('you>', { timeoutMs: 60_000 });
+    // Seed ordinary content worth summarizing, not marker-only replies: Bedrock
+    // returned content_filtered for the COMPACT_SEED summary request with both
+    // complete SDK 1.20 and 1.21 paths (SER-127). Keep the real 4 → 2 gate below.
+    // The answers are absent from the prompts, so waits cannot match prompt echo.
     const seedTurn = tui.mark();
-    tui.submit('Reply with exactly COMPACT_SEED. Do not use tools.');
-    await tui.waitFor('COMPACT_SEED', { timeoutMs: 240_000, from: seedTurn });
+    tui.submit('What is the capital of France? Answer in one short sentence without tools.');
+    await tui.waitFor('Paris', { timeoutMs: 240_000, from: seedTurn });
     await waitForIdle(tui, 240_000);
     const secondSeed = tui.mark();
-    tui.submit('Reply with exactly COMPACT_SEED_TWO. Do not use tools.');
-    await tui.waitFor('COMPACT_SEED_TWO', { timeoutMs: 240_000, from: secondSeed });
+    tui.submit('What is the capital of Japan? Answer in one short sentence without tools.');
+    await tui.waitFor('Tokyo', { timeoutMs: 240_000, from: secondSeed });
     await waitForIdle(tui, 240_000);
 
     const compact = tui.mark();
