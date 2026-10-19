@@ -141,7 +141,7 @@ P3 (Codex official CLI review scopes) documents merge-base branch review. `src/c
 
 ## SER-127 — Upgrade the pinned Strands SDK to 1.21.0 while preserving Darwin's patched contracts and runtime defaults
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 167
 - Score: 12
 - Importance: 5
