@@ -193,3 +193,55 @@ Requirement: make each ordinary composer Up/Down use the synchronous current edi
 Acceptance: register an offline real-CLI PTY regression with repeated Up and Down in one write and exact insertion witnesses; cover mixed preceding cursor/text changes, multiline plus soft-wrapped Unicode at ordinary/narrow widths, preferred-column retention and no unintended model invocation. Verify neighboring completion/queue/recall/search/permission ownership using new or existing focused checks. Child and Host independently run `pnpm typecheck` + `pnpm test`; Host inspects explicit base/result diffs, reruns the focused reproduction, checks README/guide/architecture accuracy, and runs `pnpm build`. Each requirement gets a test in the child's checklist. Host alone closes status after acceptance and appends the supervision session, commit, checks and spend to `docs/iteration-log.md`.
 
 No dependency on another new direction. Selection score remains 12 ≥ 6. Keep the implementation inside one fresh developer child; no Host implementation patching.
+
+## SER-129 — Suggest one next prompt after a completed turn; Right arrow accepts it into the draft without sending
+
+- Status: `not-started`
+- Priority: 169
+- Score: 11
+- Importance: 4
+- Architecture fit: 5
+- Evidence confidence: 5
+- Difficulty: 4
+- Risk: 3
+- Origin report: [`research_2026-10-19.md`](../research_2026-10-19.md) (run `13:38:13Z`, user-directed `peer`)
+
+### Implementation / acceptance evidence
+
+Not implemented. Source: origin report S1 (Claude Code interactive mode, Prompt suggestions), and the user's explicit Right-arrow example. Darwin evidence: `src/tui/App.tsx` plain-arrow branch only moves the current cursor; `src/tui/prompt-completion.ts:promptCompletionState` supplies slash/path candidates, not predicted prompts; `InputBox` has no next-prompt surface.
+
+Requirement: in the interactive parent TUI, optionally generate one short natural-language next-prompt candidate after an eligible completed user turn using a bounded, tool-free SDK model call. Keep generation outside the ordinary Agent conversation/loop and use observed, bounded conversation text, never new workspace reads, raw child reasoning or a new tool path. Show the result as a transient, clearly distinct suggestion only when the current composer is empty and unowned. Unmodified Right arrow accepts the displayed candidate into the editable draft but never sends/queues it; ordinary Enter after acceptance remains the only send path. Typing or Escape dismisses it. Modified arrows and ordinary nonempty-draft cursor movement remain unchanged. No automatic acceptance, no startup git-history feature, no shell/slash-control suggestions, no model-selected permissions or config changes.
+
+Acceptance must cover tool-free bounded generation, cancellation/timeout/error/no retry, provider-reported spend with unknown values preserved, disabled-mode zero calls, at most one generation attempt per eligible turn, stale-result rejection after typing/new turn/model or runtime replacement, and priority below permissions/search/completion/queue/peer/goal work. Real offline CLI PTY proves visible candidate → Right-arrow editable draft → Enter send as separate events, and no send from Right alone; typing/Escape dismissal, batched input, Unicode, narrow terminals and no hidden-row acceptance. Resume transcript, trajectory/recall and headless must stay unchanged until actual user submission. Child and Host run focused checks plus `pnpm typecheck`/`pnpm test`; Host inspects explicit commit diffs, runs `pnpm build`, checks both README/guide languages and the relevant architecture contract, and records the supervised acceptance.
+
+### Notes / blockers / abandonment reason
+
+User decision confirmed on 2026-10-19: “默认开启、分别可关闭，并接受额外的后台模型调用. 按 Claude Code 的离开后返回场景触发，而非每轮都总结”. Both features must default on, have independent off switches, and may make additional background model calls. Recap remains away/return-only, not per-response. The prior product-policy blocker is resolved. Use the current session model/provider for the suggestion, not an unrequested provider; verify the exact bounded request design and observable accounting in the worker. Do not substitute canned prompts for context-derived suggestions.
+
+Score 11 ≥ 6 at proposal and selection; no re-rating of an earlier below-gate record. No dependency on an earlier new direction. Establish a clean green starting point, mark only this item in-progress immediately before handoff, and give it a fresh developer child. SER-130 stays not-started until this direction is independently accepted. No source implementation by the Host.
+
+## SER-130 — Show a short away-session recap separately from the unchanged full resume transcript
+
+- Status: `not-started`
+- Priority: 170
+- Score: 10
+- Importance: 4
+- Architecture fit: 4
+- Evidence confidence: 5
+- Difficulty: 4
+- Risk: 3
+- Origin report: [`research_2026-10-19.md`](../research_2026-10-19.md) (run `13:38:13Z`, user-directed `peer`)
+
+### Implementation / acceptance evidence
+
+Not implemented. Source: origin report S1 (Session recap) and S2 (official weekly release digest). This is not SER-028 again: `src/trajectory/resume-recap.ts:loadResumeRecap` restores the full transcript without a model call, and the load-bearing resumed-session decision explicitly requires that behavior to remain intact.
+
+Requirement: add a separate short, bounded interactive session recap for returning after being away, plus a human-invoked `/recap` path. Proposed peer-matching trigger: at least three completed conversational turns, terminal unfocused, at least three minutes since the last completed turn; prepare in the background and show on return, at most once for the eligible completed-turn generation. Cap recap text at 400 code points. Do not turn this into an every-response summary, automatic compaction, synthetic model turn, workspace scan or replacement for startup history replay. A terminal without reliable focus reporting must not invent an away event; manual recap remains available.
+
+Acceptance: pure eligibility/dedup state with a controlled clock; real terminal focus-event handling, startup/exit cleanup and no escape bytes entering the draft; no model calls while disabled or before eligibility; bounded no-tool SDK generation with explicit auxiliary spend, cancellation/no retry/stale-result discard; no interference with permission/search/editor/queue/peer/goal ownership; local-only `/recap` provenance that peer messages, wakes and headless cannot activate. Verify draft/image untouched, recap truncation stated, narrow-terminal frame counts, manual error behavior and automatic best-effort failures. Existing `verify-resume-recap.ts` and TUI resume must continue proving the unchanged full startup transcript and byte-zero snapshot/pointer behavior. Child and Host run focused/full gates; Host rebuilds, verifies docs in both languages and appends the real supervision entry before marking done.
+
+### Notes / blockers / abandonment reason
+
+Shares SER-129's unresolved product decision: default-on versus opt-in automatic auxiliary model calls. Confirm also that the desired recap is the peer's away/return behavior, not a summary appended to every response. The current no-network resume replay is not authorization to change its semantics; keep the new feature separate. No recap model, enablement setting or terminal focus mode is selected or activated by this research record.
+
+Score 10 ≥ 6. Execute after accepted SER-129 on its resulting revision, with a fresh developer child and a fresh clean/green starting check; reuse only justified bounded-generation patterns, not a speculative generic scheduler. Status remains `not-started` until its own handoff. Next recovery step: obtain the user decision, then finish SER-129 before this direction. No implementation or independent acceptance yet.
