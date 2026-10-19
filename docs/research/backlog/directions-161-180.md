@@ -170,7 +170,7 @@ Acceptance: explicit base/result diff and patch inventory; `pnpm typecheck` + ev
 
 ## SER-128 — Keep composer Up/Down coherent across batched terminal input by using the current draft and cursor for every move
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 168
 - Score: 12
 - Importance: 3
