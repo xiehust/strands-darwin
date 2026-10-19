@@ -3942,3 +3942,35 @@ Computed exclusive-bucket sum: **30,863,303 tokens**. Displayed cost components 
 Additional Host evidence: two real current-model calls in `bg-a41bc919-dffc-48b0-9210-8751c8ebcca2` used `global.openai.gpt-6-astra` at configured `xhigh`, producing a Chinese regression-test follow-up and an English diff-review follow-up. Their provider counters sum to 265 input + 438 output = 703 total tokens, with both cache counters zero; no dollar receipt was collected. This bounded smoke check is not a broad quality or cache-saving claim. Optional generation can still yield no candidate, and long candidates are hidden rather than partially accepted.
 
 Outcome: SER-129 independently accepted and closed. Continue immediately with SER-130 on this accepted rebuilt source; do not stop the batch after this successful direction.
+
+## 2026-10-19 — SER-130 away-session recap
+
+Requirement: the separately default-on, independently disableable away/return recap confirmed by the user, never an every-answer summary and never a replacement for full startup replay. Human `/recap` remains an explicit manual request even when automatic mode is off. This is direction 2 of the same `2026-10-19T13:38:13Z` batch, built on accepted and rebuilt SER-129 rather than a stale artifact.
+
+Fresh worker **`session-20261019-155752853`**, source launch `pnpm tsx src/cli.ts --yolo --context-offload -p …`. Managed task **`bg-8db32296-c493-4a50-9078-3cda70632e6a`** exited 0 and was fully drained. No correction, ceiling or server retry. Exact base `d90a48e6cb234c812db34533efc7a6d78a12f3d5` contains the accepted SER-129 source and Host-only closure/selection docs. Its source was byte-identical to the green Host typecheck/full-test/build result. The base/result range contains only the worker commit below; no other writer. Host made no source edits.
+
+| Milestone | Accepted commit | Independent Host acceptance |
+|---|---|---|
+| Bounded actual-focus away recap and human `/recap`, independent default-on control, unchanged resume replay | `d656b4b3a8be7aac6e965ac0354b3f0dc62419a2` | Reviewed complete source, new and changed test assertions, bilingual documentation and exact history. `bg-392dabc8-0727-42a6-8574-a29608f943d3` exited 0: `pnpm tsx spike/verify-session-recap.ts`, `verify-session-recap-pty.ts` (including the REAL 180-second delay), both prompt-suggestion suites, `verify-resume-recap.ts`, free TUI `resume` and `completion`, `verify-collaboration-drivers.ts`, and `verify-headless.ts`. `bg-99bb2ff6-6e85-4ba1-b6dc-7d9075351a05` exited 0: `pnpm typecheck && pnpm test && pnpm build && git diff --check && git status --porcelain`; final status clean. |
+
+The worker fixed the tty adapter type/method collision, external-editor source-tty handoff and PTY wait/offset errors before completion. Discovery bounds grew to include `/recap`, with the new entry asserted and prior completion coverage retained. The full gate found the existing strict stdin inventory; its update adds only the exact interactive adapter construction, keeps the piped reader's sole caller and keeps global stdin out of TUI components. The corrected worker full gate and the independent Host gate passed. No assertion was waived, dependency/SDK patch introduced or preload limit raised. Host also checked all changed files for Unicode replacement characters after a lossy tool projection looked garbled; the actual files contained none and required no edit.
+
+Docs wrap-up in the accepted commit: both READMEs; English/Chinese using-darwin, configuration, reference and sessions-and-state guides; load-bearing rationale and compact AGENTS index. `sessionRecap: false` independently disables automatic requests/timers/focus reporting, while `/recap` stays manual and `promptSuggestions` is independent. Evidence is this visit's bounded completed text, not restored history; unsupported focus terminals have manual recap only. Recaps are labelled generated/unverified, with omissions and output truncation stated. The main Agent, snapshots, trajectory, recall and startup full replay remain unchanged. Host rebuilt installed `dist`; no later docs sync was needed.
+
+### Worker invocation spend
+
+| Managed task | input | output | cacheRead | cacheWrite | Approximate USD total |
+|---|---:|---:|---:|---:|---:|
+| `bg-8db32296-c493-4a50-9078-3cda70632e6a` | 162 | 84,495 | 16,443,785 | 317,743 | 24.6419 |
+
+Exact receipt: `usage: input=162 output=84495 cacheRead=16443785 cacheWrite=317743`.
+Exact cost receipt: `cost: total=24.6419 input=0.0016 output=4.2248 cacheRead=16.4438 cacheWrite=3.9718 model=global.openai.gpt-6-astra pricing=global.openai.gpt-6-astra`.
+Computed exclusive-bucket sum: **16,846,185 tokens**. Authoritative receipt total is **24.6419 USD**; separately displayed four-decimal components sum to **24.6420**, a **-0.0001** total-minus-components residual. Preserve the reported total rather than claiming exact displayed-component reconciliation. No unknown child bucket.
+
+Additional Host smoke call `bg-c78a3b7c-a51c-459a-91fb-0f993eb0ba60` used the current `global.openai.gpt-6-astra` at configured `xhigh`: 222 input + 360 output = 582 total provider tokens, zero cache counters, returning an 87-code-point Chinese recap that attributed reported progress and retained the unreviewed/uncommitted next step. No dollar receipt was collected. This is a bounded smoke observation, not a quality benchmark. Across both directions, the three Host smoke calls total 487 input + 798 output = 1,285 tokens, with zero cache counters; they are separate from worker receipts and do not measure other Host inference.
+
+### Batch totals and closure
+
+The two fresh worker invocations total **408 input, 188,471 output, 46,806,120 cacheRead, 714,489 cacheWrite**, or **47,709,488 exclusive-bucket tokens**. Receipt totals sum to **65.1648 USD** at their recorded approximate base pricing; displayed components sum to 65.1649, retaining the -0.0001 residual above. No correction/retry invocation or unknown receipt. Both workers emitted an optional AgentCore in-flight/interrupted-state diagnostic at exit; this batch did not investigate or repair cloud-memory state and makes no live cloud-health claim.
+
+**Halt: batch exhausted.** SER-129 and SER-130 are independently accepted and done; no direction was abandoned. Commit the closure records, push the current branch once normally and verify `git log @{u}..` before the final report. No dependency install, SDK patch, user-config rewrite or history rewrite.

@@ -224,7 +224,7 @@ Score 11 ≥ 6 at proposal and selection; no re-rating. Host accepted on the fir
 
 ## SER-130 — Show a short away-session recap separately from the unchanged full resume transcript
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 170
 - Score: 10
 - Importance: 4
@@ -236,7 +236,9 @@ Score 11 ≥ 6 at proposal and selection; no re-rating. Host accepted on the fir
 
 ### Implementation / acceptance evidence
 
-Not implemented. Source: origin report S1 (Session recap) and S2 (official weekly release digest). This is not SER-028 again: `src/trajectory/resume-recap.ts:loadResumeRecap` restores the full transcript without a model call, and the load-bearing resumed-session decision explicitly requires that behavior to remain intact.
+Accepted commit `d656b4b3a8be7aac6e965ac0354b3f0dc62419a2` from fresh child `session-20261019-155752853`, task `bg-8db32296-c493-4a50-9078-3cda70632e6a` (exit 0, fully drained), against explicit base `d90a48e6cb234c812db34533efc7a6d78a12f3d5`. The source adds independent default-on `sessionRecap`, human-only `/recap`, bounded tool-free current-model inference, a focus-filtering stream at Ink's public stdin seam, and away/return state. Full startup replay remains unchanged.
+
+Independent Host acceptance: `bg-392dabc8-0727-42a6-8574-a29608f943d3` passed recap SDK and real-PTY suites (including the actual 180-second delay), both suggestion suites, `verify-resume-recap.ts`, free TUI `resume`/`completion`, collaboration drivers and headless; `bg-99bb2ff6-6e85-4ba1-b6dc-7d9075351a05` passed `pnpm typecheck`, full `pnpm test`, `pnpm build`, diff check and clean status. A real current-model recap smoke call produced an 87-code-point contextual Chinese summary (`bg-c78a3b7c-a51c-459a-91fb-0f993eb0ba60`), not a broad quality benchmark. Host reviewed all source/test/doc changes and exact commit history with no other writer. Both README languages and using/configuration/reference/sessions guide languages were synchronized. Full receipts are in `docs/iteration-log.md` § 2026-10-19 — SER-130 away-session recap.
 
 Requirement: add a separate short, bounded interactive session recap for returning after being away, plus a human-invoked `/recap` path. Proposed peer-matching trigger: at least three completed conversational turns, terminal unfocused, at least three minutes since the last completed turn; prepare in the background and show on return, at most once for the eligible completed-turn generation. Cap recap text at 400 code points. Do not turn this into an every-response summary, automatic compaction, synthetic model turn, workspace scan or replacement for startup history replay. A terminal without reliable focus reporting must not invent an away event; manual recap remains available.
 
@@ -246,4 +248,4 @@ Acceptance: pure eligibility/dedup state with a controlled clock; real terminal 
 
 User confirmed on 2026-10-19: “默认开启、分别可关闭，并接受额外的后台模型调用. 按 Claude Code 的离开后返回场景触发，而非每轮都总结”. Automatic recap must default on with its own off switch, independent of `promptSuggestions`; additional auxiliary inference is authorized. Use away/return behavior, never a summary after every response. Disabling automatic recap does not turn an explicit human `/recap` into background work: retain the manual path described by the primary source, with ordinary local provenance and visible cost. Keep the existing no-network resume replay unchanged.
 
-Score 10 ≥ 6. Starting source is independently accepted/rebuilt SER-129 commit `2e2aba8b93381b6ab25d504ad811e4c8437566c4`, with closure `449d7f01d68d2602d7c9c1cef039f0a79a7f87bb`. Host full typecheck/test/build passed at that source; only closure/selection documentation follows it, and clean status plus ancestry were checked. Reuse justified bounded-generation/transport patterns, not a new generic scheduler. This direction now owns the sole in-progress slot and gets a fresh developer child, never the SER-129 session. No recap implementation or independent acceptance yet.
+Score 10 ≥ 6. Implemented sequentially after accepted/rebuilt SER-129, with a fresh child and first-attempt independent Host acceptance; no correction, Host implementation edit, dependency or SDK patch. The stdin inventory regression keeps the headless reader's sole caller and inventories the exact new interactive adapter construction. AGENTS stays under its existing 32 KiB assertion. Limitations are explicit: evidence is this interactive visit's last six qualifying text exchanges, not restored history; unsupported focus reporting means no automatic recap, while manual `/recap` remains. Generated claims are labelled unverified and omissions/truncation/spend are stated. The batch is exhausted after this accepted closure.
