@@ -4394,6 +4394,9 @@ async function queueTakeback(): Promise<void> {
     tui.send('\u0015\u007f\u0015\u007f\u0015');
 
     // --- Cancel: a queued entry is returned unsent, never silently sent. ---
+    // These are independent cancellations, not the documented Ctrl+C-twice quit
+    // chord. Fast local runs can reach the second one inside its two-second window.
+    await settle(2100);
     const beforeCancelRun = tui.mark();
     tui.submit('!sleep 30');
     await tui.waitFor('running ! command…', { timeoutMs: 30_000, from: beforeCancelRun, settleMs: 200 });

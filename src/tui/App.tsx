@@ -3460,8 +3460,11 @@ export function App({
       // cursor movement, which is what leaves a multi-line draft's rows navigable.
       if (key.upArrow && takeBackQueued()) return;
       if (stepRecall(key.upArrow ? 'older' : 'newer')) return;
-      const moved = moveVertical(layout, key.upArrow ? -1 : 1, preferredColumn.current);
-      setEditor((current) => ({ ...current, cursor: moved.cursor }));
+      // Earlier keys in this stdin batch may have changed the draft or cursor
+      // without a render. Use the same immediate geometry as queue/recall above.
+      const current = editorRef.current;
+      const moved = moveVertical(layoutEditor(current.text, columns, current.cursor), key.upArrow ? -1 : 1, preferredColumn.current);
+      setEditor({ ...current, cursor: moved.cursor });
       preferredColumn.current = moved.preferredColumn;
       return;
     }

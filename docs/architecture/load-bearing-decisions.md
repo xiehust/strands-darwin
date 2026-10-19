@@ -3179,6 +3179,18 @@ row the menu already has**.
 
 ## Prompt recall
 
+**Ordinary vertical movement uses the immediate editor mirror (SER-128).** Multiple
+stdin events can arrive before React renders. Like queue take-back and recall,
+ordinary Up/Down derives `layoutEditor` from `editorRef.current` for each event,
+then uses the unchanged `moveVertical` preferred-column and grapheme/soft-wrap
+rules. Render-captured geometry would repeat the first move in a batch or target
+text already changed by an earlier key. Permission/compaction/search still own
+input first, then completion, queue take-back, recall, and ordinary movement.
+Registered `verify-composer-vertical-pty.ts` pins exact single-write insertion
+witnesses at 70/24 columns, mixed edits, Unicode affinity, retained/reset columns,
+modal ownership and no unintended model calls; free TUI `completion`, `queue`
+and `recall` pin the competing arrow owners.
+
 **Explicit draft stash (SER-085) belongs only to the composer.** `draft-stash.ts`
 provides a pure one-slot transition over exact `EditorValue` plus optional `ImageBlock`;
 `App` owns its state and immediate ref, never the runtime. Ctrl+S stores/clears when
