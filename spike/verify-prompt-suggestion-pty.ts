@@ -93,7 +93,16 @@ try {
   tui.submitChunk('queue owner'); await settled(() => tui!.frame.includes('working…'), 'queue owner working'); tui.submitChunk('queued human');
   await tui.waitFor('Observed answer about queued human', { settleMs: 120 }); await draft('');
   check.equal((await ledger()).filter(call => call.kind === 'suggestion' && /queue owner|queued human/u.test(call.text)).length, 0);
-  tui.submitChunk('/goal condition'); await tui.waitFor('goal'); tui.submitChunk('goal human');
+  // Generic "goal" can match prior output or the echo before Enter is processed.
+  // Observe this command's acknowledgement and settled composer before sending again.
+  const goalMark = tui.mark(); tui.submitChunk('/goal condition');
+  await tui.waitFor(/^info · goal set: condition\r?$/mu, { from: goalMark, settleMs: 120 });
+  await settled(() => {
+    const frame = tui!.frame;
+    return frame.includes('◆ DARWIN · ready · goal armed')
+      && frame.split('\n').some(line => line.trimEnd() === 'you>');
+  }, 'goal armed with ready empty composer');
+  tui.submitChunk('goal human');
   await tui.waitFor('goal met', { settleMs: 120 }); await draft('');
   check.equal((await ledger()).filter(call => call.kind === 'suggestion' && call.text.includes('goal human')).length, 0);
   tui.submitChunk('permission'); await tui.waitFor('allow? y n'); tui.send(RIGHT);
