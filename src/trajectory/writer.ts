@@ -149,8 +149,8 @@ export interface TrajectoryStatus {
 /**
  * One turn's observer. The opening `userInput` (or, for a background-task wake, the
  * `taskNotification` that stands in its place — SER-069) is appended before
- * invocation; later records accumulate during the stream and append together at
- * the end, so nothing between two events touches the disk.
+ * invocation. Stream-event observation only buffers; admitted steering inputs
+ * reuse the bounded input barrier, and the closing turn flushes the remainder.
  */
 export class TurnRecording {
   private readonly recorded = new Map<string, number>();
@@ -220,6 +220,17 @@ export class TurnRecording {
    */
   inputDurable(): Promise<void> {
     return this.recorder.inputDurable();
+  }
+
+  /** Literal human text admitted at a tool boundary, not a new invocation/ordinal. */
+  steeringInput(text: string): void {
+    if (this.ended) return;
+    try {
+      const { value, trunc } = capField(text, 'text');
+      this.recorder.buffer({ turn: this.turn, type: 'userInput', text: value, delivery: 'steering' }, trunc);
+    } catch (error) {
+      this.recorder.fail(error);
+    }
   }
 
   /**

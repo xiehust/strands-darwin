@@ -117,6 +117,7 @@ import { createCloudMemoryTools } from '../agentcore/tools.js';
 import type { MemoryStatus } from '../memory/store.js';
 
 import { recordStream } from '../trajectory/stream.js';
+import { installPromptSteering, type PromptSteeringSource } from './prompt-steering.js';
 import type { ContextCompactedEntry, PermissionDecisionFields, TaskNotificationFields } from '../trajectory/record.js';
 import {
   TrajectoryRecorder,
@@ -1422,6 +1423,7 @@ export class AgentRuntime {
     userInput = input,
     image?: ImageBlock,
     origin?: TaskNotificationFields | PeerInput,
+    steering?: PromptSteeringSource,
   ): AsyncIterable<AgentStreamEvent> {
     this.suggestionAbort?.abort();
     this.recapAbort?.abort();
@@ -1456,6 +1458,7 @@ export class AgentRuntime {
     let naturallyCompleted = false;
     let uploadTurn: number | undefined;
     let streamStarted = false;
+    let removeSteering: (() => void) | undefined;
     this.activeTurnBefore = before;
     try {
       // A multimodal turn's durable text is the literal submitted prompt. Expanded
@@ -1496,6 +1499,19 @@ export class AgentRuntime {
       const invocation = image === undefined ? modelInput : [new TextBlock(modelInput), image];
       this.checkCloudPreparation(cloudGeneration);
       if (peer) this.collaboration.validateDelivery(peer);
+      if (steering !== undefined) {
+        removeSteering = installPromptSteering(this.agent, steering, async text => {
+          const submitted = await this.codexHooks?.userPromptSubmit(text);
+          if (submitted !== undefined && !submitted.allowed) {
+            throw new Error(submitted.reason ?? 'UserPromptSubmit hook blocked this correction.');
+          }
+          return injectCodexContext(text, submitted?.context);
+        }, async text => {
+          recording?.steeringInput(text);
+          await recording?.inputDurable();
+          if (recording !== undefined && this.trajectory?.status.active === false) this.memoryController?.discard();
+        });
+      }
       streamStarted = true;
       const stream = this.backgroundDelegation.observe(this.agent.stream(invocation));
       for await (const event of recordStream(stream, recording)) {
@@ -1529,6 +1545,7 @@ export class AgentRuntime {
       }
       naturallyCompleted = true;
     } finally {
+      removeSteering?.();
       if (uploadTurn !== undefined) this.cloudMemory?.sealTurn(uploadTurn, naturallyCompleted && completed && cloudGeneration === this.cloudMemory.cancelGeneration);
       // Seeing an endTurn event is not enough when the consumer abandons this
       // generator before natural completion: only the natural path above seals.

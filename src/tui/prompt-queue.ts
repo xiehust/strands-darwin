@@ -4,10 +4,11 @@
  * This deliberately supersedes SER-010's "retained, never queued" busy-submit
  * contract, by explicit user product decision (2026-08-19). A prompt or `!`
  * command submitted while a turn streams or a `!` command runs leaves the editor
- * and joins this FIFO queue; when the session returns to idle the queue drains
- * one entry at a time through the ordinary submit path, so every entry keeps its
- * own meaning (its own turn, its own `!` run, its own trajectory `userInput` line
- * written exactly at send time). Nothing here is I/O and nothing here decides
+ * and joins this FIFO queue. A plain-text prefix can steer at the next completed
+ * SDK tool batch; commands, images and wakes remain next-turn-only FIFO barriers.
+ * At idle, remaining entries drain one at a time through ordinary submit, keeping
+ * their own meaning. Every human input is recorded only at delivery, with in-turn
+ * corrections marked as steering on the original turn. Nothing here is I/O or decides
  * *when* to send — the App owns the state machine; this module owns the pure
  * projections it shares with the frame budget and the tests:
  *
@@ -29,6 +30,7 @@
  */
 
 import type { ImageBlock } from '@strands-agents/sdk';
+import { MAX_STEERING_PER_BOUNDARY } from '../agent/prompt-steering.js';
 
 import type { BackgroundDelegationStatus } from '../agent/background-delegation.js';
 import type { TaskNotificationFields } from '../trajectory/record.js';
@@ -60,6 +62,17 @@ export type QueuedPrompt = QueuedUserPrompt | QueuedTaskWake;
 
 export function isTaskWake(entry: QueuedPrompt): entry is QueuedTaskWake {
   return entry.kind === 'taskNotification';
+}
+
+/** Only a plain-text FIFO prefix can steer: commands, images and wakes are barriers. */
+export function steeringCandidates(entries: readonly QueuedPrompt[]): QueuedUserPrompt[] {
+  const candidates: QueuedUserPrompt[] = [];
+  for (const entry of entries) {
+    if (candidates.length === MAX_STEERING_PER_BOUNDARY || isTaskWake(entry) ||
+      entry.image !== undefined || /^[!/]/.test(entry.text.trimStart())) break;
+    candidates.push(entry);
+  }
+  return candidates;
 }
 
 /**

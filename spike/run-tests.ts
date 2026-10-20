@@ -46,6 +46,8 @@ const suites = [
   'verify-rewind-search.ts',
   'verify-search-paste.ts',
   'verify-prompt-queue.ts',
+  'verify-prompt-steering.ts',
+  'verify-prompt-steering-pty.ts',
   'verify-goal-command.ts',
   'verify-shell-command.ts',
   'verify-stream-into-static.ts',

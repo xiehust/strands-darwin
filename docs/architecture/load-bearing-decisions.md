@@ -3505,16 +3505,19 @@ ownership invalidation, queue/compaction/session handoffs), both in `pnpm test`;
 
 ## The prompt queue
 
-**A submission while the session is busy queues, visibly, and is sent when the turn ends**
-(`src/tui/prompt-queue.ts`, `src/tui/QueuedMessages.tsx`, App state in `src/tui/App.tsx`). SER-027 **deliberately
-supersedes SER-010's "retained, never queued" contract by explicit user product decision**
-(2026-08-19, `docs/research/research_2026-08-19.md` addendum `02:01:06Z`) — the peer shape is
-Claude Code's queue-while-working. Scope was decided with the reopening: **next-turn-only
-delivery**, never injection into a running SDK stream. Delivery is **sequential** — when the
-session returns to idle, a `useEffect` drains one entry at a time through the ordinary `submit()`
-path, so a queued prompt is its own turn, a queued `!` its own run, and every entry keeps exactly
-the meaning it would have had at idle; joined-as-one-prompt was rejected because a queue can hold a
-mix of prompts, `!` commands and slash expansions, which no single string preserves. What refuses
+**Busy submissions remain visible in one FIFO; plain text can now steer the running turn at
+its next completed tool batch** (`src/agent/prompt-steering.ts`, `src/tui/prompt-queue.ts`,
+`src/tui/QueuedMessages.tsx`, App state in `src/tui/App.tsx`). The explicit user request on
+2026-10-20 supersedes SER-027's next-turn-only delivery for ordinary text, not its ownership,
+ordering or command semantics. One invocation-scoped SDK `AfterToolsEvent` hook appends the
+eligible text prefix after the complete user-role tool results, before the SDK appends that
+message and makes its next model call. It never forks the loop, mutates agent history directly,
+replaces the executor, splits sibling parallel tools or interrupts work already running.
+At most 16 entries are admitted per boundary; later arrivals wait for another boundary.
+Commands (`!` and `/`), images and session-originated wakes are FIFO barriers, never skipped or
+reinterpreted as human text. At idle the existing effect drains remaining entries one at a time
+through ordinary `submit()`, so no-tool turns and ineligible entries retain their prior behavior.
+What refuses
 instead of queueing is a closed set (`refusesToQueue`): `/clear`, `/compact`, `/model`, `/exit`,
 `/quit` — session-replacing commands whose delayed, unprompted execution would be worse than a
 second Enter; they keep SER-010's refusal-with-retained-draft shape, stated as the deliberate
@@ -3525,12 +3528,28 @@ row (see below). The busy hint counts user entries and pending notifications sep
 fully cut listing still cannot accumulate invisibly. `Up` from the draft's first visual row takes the
 whole queue back into the editor ahead of typed text — the gesture joins the key chain between the
 completion menu and prompt recall. A **cancel or a
-failed turn returns the queue to the editor unsent** (auto-resending into an error is how retry
-loops start), a pending permission holds it untouched, and `/clear` drops it with the conversation.
-Nothing is recorded at enqueue time: a drained entry becomes a `userInput` at send time, and an
-entry taken back or dropped was never sent — trajectory honesty by construction, which is also why
-prompt recall needed no change. Free checks: `spike/verify-prompt-queue.ts`,
-`spike/verify-tui.ts queue` / `bang`; live: the `usage` scenario's mid-turn half.
+failed turn returns the undelivered queue to the editor unsent** (auto-resending into an error is
+how retry loops start), a pending permission prevents reaching the tool boundary, and `/clear`
+drops it with the conversation. The driver owns entries until an identity-checked provisional
+claim; ownership is checked before and after each asynchronous `UserPromptSubmit` preparation.
+Only `MessageAddedEvent` for the exact offered message confirms delivery and publishes/records
+its text. `AfterToolsEvent` also runs on failed-batch cleanup, so claiming there alone is never
+an acknowledgement. Failure or stream abandonment restores unappended claims to the queue.
+Every correction runs the controlling hook once; denial restores pending input without failing
+the original work or retrying the same rejection. Both invocation-scoped hooks are removed in
+`finally`, including failure and abandonment.
+
+Nothing is recorded at enqueue time. Delivered corrections append literal `userInput` records
+with `delivery: 'steering'` on the **same turn ordinal**, then use the bounded no-throw input
+barrier before the next model call. `recordStream` remains synchronous and unchanged. The TUI
+and replay use the same user-row action; prompt recall includes delivered corrections. Rewind
+boundary lookup ignores steering records as turn openers: the original pre-invocation checkpoint
+removes the whole exchange, with no separate correction checkpoints. No busy timer, plan or turn
+lifecycle is reset. Consumed corrections cannot be idle-drained or returned as unsent again.
+Preference/identity memory evidence and cloud goal metadata deliberately retain the opening
+prompt's scope; this change does not reopen memory, widen cloud consent or treat hook context as
+human evidence. Free checks: `verify-prompt-queue.ts`, `verify-prompt-steering.ts`,
+`verify-prompt-steering-pty.ts`, `verify-tui.ts queue` / `bang`; live: the `usage` scenario's mid-turn half.
 
 ## Background-task wake — one queued session-originated turn, never a second channel
 

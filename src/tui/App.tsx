@@ -190,6 +190,7 @@ import {
   partitionQueue,
   queuedCountHint,
   refusesToQueue,
+  steeringCandidates,
   takeBackDraft,
   type QueuedPrompt,
   type QueuedTaskWake,
@@ -1326,6 +1327,24 @@ export function App({
               userInput,
               turnInput === text ? image : undefined,
               origin,
+              {
+                pending: () => turnAborted.current ? [] : steeringCandidates(queuedRef.current),
+                claim: prompt => {
+                  if (turnAborted.current || queuedRef.current[0] !== prompt) return false;
+                  setQueued(queuedRef.current.slice(1));
+                  return true;
+                },
+                delivered: prompt => {
+                  dispatch({ type: 'userInput', text: prompt.text });
+                  historyRead.current.stale = true;
+                },
+                restore: prompts => setQueued([...prompts, ...queuedRef.current]),
+                reject: (prompt, reason) => {
+                  if (queuedRef.current[0] !== prompt) return;
+                  returnQueuedToEditor(false);
+                  dispatch({ type: 'notice', severity: 'warn', text: `correction not sent: ${reason} — queued input restored to the editor` });
+                },
+              },
             )) {
               if (goalKind === 'user') {
                 if (event.type === 'modelMessageEvent') recapAnswer = recapTail(event.message.content.map(block => block.type === 'textBlock' ? block.text : '').join(''), 1600);
@@ -1552,7 +1571,7 @@ export function App({
       }
       return !failed;
     },
-    [applyGoalTransition, prepareAnswerClose, returnQueuedToEditor, runtime, setGoal, setTangent, waitUntilRenderFlush],
+    [applyGoalTransition, prepareAnswerClose, returnQueuedToEditor, runtime, setGoal, setQueued, setTangent, waitUntilRenderFlush],
   );
 
   const submit = useCallback(
@@ -2092,6 +2111,7 @@ export function App({
       // (SER-027 — deliberately superseding SER-010's "retained, never queued"
       // contract, by explicit user product decision, 2026-08-19): it leaves the
       // editor, is listed above the input box, counted on the busy hint, and is
+      // delivered at the next tool-batch boundary (plain text only), otherwise
       // sent through this same path when the session returns to idle. Two
       // deliberate exceptions keep the old refusal shape:
       // - compaction owns the keyboard entirely, so this branch is a safety net;

@@ -11,13 +11,13 @@ import { replayRecords } from './replay.js';
 export function rewindHistoryBoundary(records: readonly TrajectoryRecord[], checkpoint: RewindCheckpoint): number | undefined {
   if (checkpoint.trajectoryTurn === undefined) return undefined;
   const candidates = records.flatMap((record, index) =>
-    record.type === 'userInput' && record.turn === checkpoint.trajectoryTurn ? [index] : []);
+    record.type === 'userInput' && record.delivery !== 'steering' && record.turn === checkpoint.trajectoryTurn ? [index] : []);
   if (candidates.length !== 1) return undefined;
   const index = candidates[0]!;
   const opening = records[index]!;
   // Require a closed eligible exchange in this run; a partial/damaged match is not a boundary.
   for (const record of records.slice(index + 1)) {
-    if (record.type === 'userInput' || record.type === 'peerInput' || record.type === 'taskNotification' || record.type === 'runStarted') break;
+    if ((record.type === 'userInput' && record.delivery !== 'steering') || record.type === 'peerInput' || record.type === 'taskNotification' || record.type === 'runStarted') break;
     if (record.type === 'turnEnded' && record.turn === opening.turn) {
       return record.stopReason === 'endTurn' || (typeof record.stopReason === 'string' && isRefusalStop(record.stopReason)) ? index : undefined;
     }

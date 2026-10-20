@@ -135,8 +135,10 @@ export interface RunStartedRecord extends RecordEnvelope {
 
 export interface UserInputRecord extends RecordEnvelope {
   type: 'userInput';
-  /** Exactly what was handed to `agent.stream()`, so a slash command appears expanded. */
+  /** Literal human input; command expansion and hook context are not evidence. */
   text: string;
+  /** Same invocation/turn, delivered at a tool boundary rather than opening a turn. */
+  delivery?: 'steering';
 }
 
 export interface EventRecord extends RecordEnvelope {

@@ -127,9 +127,11 @@ It never sends or queues automatically, writes to disk, or exposes parked conten
 
 ## Queueing while busy
 
-Submitting a normal prompt or `!` command while a turn is busy queues it for the next turn. Entries are visible above the input and drain one at a time through the ordinary submit path after the current turn. They are not injected mid-stream and are recorded only when actually sent.
+Submitting plain text while the agent is working queues a correction for the next completed tool batch, before the next model call in the **current turn**. This lets you change direction without waiting for the whole agent loop. It does not interrupt a running tool or separate sibling tools in one parallel batch. Up to 16 queued text entries are delivered per boundary, in order; anything left stays visible.
 
-`Up` from the first draft row takes a queued entry back. Cancel/failure returns the currently draining entry unsent; pending permission holds the queue. `/clear` drops queued work. `/clear`, `/compact`, `/model`, `/exit`, and `/quit` refuse while busy rather than being queued.
+`!` commands, slash commands, attached images and background notifications still wait for idle and keep their ordinary meaning. They are FIFO barriers: later text does not jump ahead of them. If the current turn has no further tool boundary, remaining entries drain one at a time after it ends. A permission prompt holds delivery until the tool batch can finish.
+
+`Up` from the first draft row takes queued text back. Cancel/failure restores only **undelivered** queued entries; a correction already admitted to the conversation stays sent and is not replayed. A blocked prompt hook returns the pending text to the editor without cancelling the original work. Only delivered text enters transcript, export and prompt history. In-turn corrections share the original turn and its rewind checkpoint; they do not create independent rewind points. `/clear` drops queued work. `/clear`, `/compact`, `/model`, `/exit`, and `/quit` refuse while busy rather than being queued.
 
 The queue has a second row kind: a **background-task wake**. When a `bash start` job finishes, one row `queued · [task bg-xxxxxxxx succeeded] <command>` joins the queue (the busy hint counts it as ` · 1 task wake`) and drains like a prompt — one ordinary turn that tells the model the job ended, with its exit status and output tail, so the model need not poll `wait`. It is not yours to edit: `Up` and a cancel return only typed entries to the editor and leave wakes queued; `/clear` drops them. No wake is sent for a job the model already saw finish through `wait`/`status`/`list` in a completed turn. Set `backgroundTaskWake: false` in `~/.darwin/config.json` to keep the completion notice only.
 
