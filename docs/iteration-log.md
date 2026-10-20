@@ -3974,3 +3974,23 @@ Additional Host smoke call `bg-c78a3b7c-a51c-459a-91fb-0f993eb0ba60` used the cu
 The two fresh worker invocations total **408 input, 188,471 output, 46,806,120 cacheRead, 714,489 cacheWrite**, or **47,709,488 exclusive-bucket tokens**. Receipt totals sum to **65.1648 USD** at their recorded approximate base pricing; displayed components sum to 65.1649, retaining the -0.0001 residual above. No correction/retry invocation or unknown receipt. Both workers emitted an optional AgentCore in-flight/interrupted-state diagnostic at exit; this batch did not investigate or repair cloud-memory state and makes no live cloud-health claim.
 
 **Halt: batch exhausted.** SER-129 and SER-130 are independently accepted and done; no direction was abandoned. Commit the closure records, push the current branch once normally and verify `git log @{u}..` before the final report. No dependency install, SDK patch, user-config rewrite or history rewrite.
+
+## 2026-10-20 — v0.0.53 release-gate PTY synchronization
+
+The release candidate's first local gate (`bg-7491a782-f99b-4348-ba59-c45e2c820467`) passed typecheck but failed before publication in `verify-prompt-suggestion-pty.ts`, waiting for `goal met`. Retained `/tmp/darwin-suggestion-pty-jEkbTf/pty.raw` showed `/goal condition` and `goal human` merged into one command, acknowledged as `goal set: condition goal human`; the model ledger contained no separate `goal human` turn. The generic `waitFor('goal')` was not a command-completion barrier. No tag, npm publish or GitHub release had been created.
+
+Host restored only its own uncommitted version bump for a clean repair base, then launched fresh worker **`session-20261020-023637090`** from source with `--yolo --context-offload`. Task **`bg-ff0b98bf-c526-44bf-b370-47cbe4e8be6b`** exited 0 and was fully drained. Scope was the one test setup region, with no production/version/workflow change, no increased timeout and no assertion removal. No correction, retry or model-call ceiling. Base/result history contains only the worker commit below; no other writer.
+
+| Milestone | Accepted commit | Independent Host acceptance |
+|---|---|---|
+| Wait for fresh exact goal acknowledgement and a settled ready/empty composer before the next submission | `85dd04334456bc3df58728c6b6e4c28dc0045b49` | Reviewed the sole-file diff against `6449ddfe177329401e830399f80cfdcfe250f52b`: fresh mark, anchored acknowledgement regexp, existing settled helper and current-frame readiness; `goal met` and zero-suggestion assertions/timeouts unchanged. Host restored the release-only version bump to 0.0.53, then `bg-97de340d-68f1-48ef-9192-88a2cba308d3` passed the focused PTY, `pnpm typecheck`, full `pnpm test`, `pnpm tsx spike/verify-npm-package.ts` (49/0, including build, real registry installation, patched SDK byte identity and unpatched negative control), diff check and built CLI version `darwin 0.0.53`. Only the intended manifest bump remained dirty. |
+
+The worker independently passed focused PTY/typecheck/full tests before committing. Host acceptance tested the repair plus the sole release-version change; no production behavior changed. No README, user-guide or architecture sync was required for this test-only repair. The package suite rebuilt `dist` and verified the actual installed tarball under a private prefix. The release itself remains gated by the existing tag-triggered workflow, including a fresh runner's full quality and packaging gates; local success is not a publication claim.
+
+### Worker invocation spend
+
+Exact receipt: `usage: input=32 output=4726 cacheRead=669323 cacheWrite=51583`.
+Exact cost receipt: `cost: total=1.5507 input=0.0003 output=0.2363 cacheRead=0.6693 cacheWrite=0.6448 model=global.openai.gpt-6-astra pricing=global.openai.gpt-6-astra`.
+One invocation totals **725,664 exclusive-bucket tokens** and approximately **1.5507 USD**. Displayed cost components sum to the reported total, residual 0.0000; no unknown bucket. Host inference is separate.
+
+Outcome: repair independently accepted; prepare the matching annotated v0.0.53 tag and publish through the unchanged workflow. Never bypass a failed gate or claim release success before checking npm and GitHub.
