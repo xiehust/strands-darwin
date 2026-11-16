@@ -252,7 +252,7 @@ Score 10 ≥ 6. Implemented sequentially after accepted/rebuilt SER-129, with a 
 
 ## SER-131 — Upgrade the pinned Strands SDK to 1.25.0 while preserving Darwin's patched contracts
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 171
 - Score: 10
 - Importance: 5
@@ -264,7 +264,11 @@ Score 10 ≥ 6. Implemented sequentially after accepted/rebuilt SER-129, with a 
 
 ### Implementation / acceptance evidence
 
-Host verified clean starting commit `e775facb7aa26b970090ae47945628abdcb9a8b3`: focused `pnpm tsx spike/verify-skills.ts`, `pnpm typecheck` and full `pnpm test` passed in task `bg-63911ed1-d6bc-4316-8e81-e9ec1fa88ade` (exit 0). No implementation accepted yet. Installed and declared SDK are 1.21.0. The [1.25.0 release](https://github.com/strands-agents/harness-sdk/releases/tag/typescript/v1.25.0), published 2026-11-13T16:54:31Z, and npm metadata were checked on 2026-11-16. Independent acceptance is required before `done`.
+Accepted commit **`375765f2586d0625c36ba196da43f3fe41a3f645`** after independent Host acceptance, not the worker report alone. Fresh child `session-20261116-030950379`: initial task `bg-542dc68a-cc50-436f-bfbf-edd57d8465fb` failed on a provider server error; the same-request, explicit-session retry `bg-2a383bc6-4212-40fe-93cf-0a86b5b23ae8` succeeded. Both outputs were fully drained. History from source base `72f310fdaa6ccd8afe041ec7363b59da2969baca` contains only that worker commit. Before delegation, Host passed the clean baseline's focused skills check, typecheck and complete fast gate in `bg-63911ed1-d6bc-4316-8e81-e9ec1fa88ade`.
+
+Host acceptance task **`bg-b40f6985-040e-4748-884e-a4fdd162d077`**, 2026-11-16 04:33:26–05:00:39 UTC, exited 0 after `pnpm install --frozen-lockfile`, `pnpm typecheck`, full `pnpm test`, `pnpm tsx spike/verify-npm-package.ts`, the `completion`, `compacting`, `bashExit` and `cancelThenContinue` TUI scenarios (each `AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts <scenario>`), `AWS_REGION=us-west-2 pnpm tsx spike/probe-cancel-exit.ts`, `pnpm build`, built CLI `--version`, and clean diff/status. The diagnostic probe exited naturally with only `FSReqPromise` after cancellation; no universal provider-leak claim. No required check was skipped.
+
+Independent semantic patch comparison confirmed all 54 old hunks accounted for, now 56 across the same 18 files; only Bedrock and Responses adapter added/removed lines differ. The upstream unsigned-Claude filter replaces its local duplicate; provenance guards and both Responses formatting paths remain covered. All 26 changed/new lock snapshots are within the new SDK closure and all 16 removed snapshots within the old closure; only the SDK direct importer changed, package-manager lock segment unchanged, and patch SHA-256 matches the lock. The SDK is installed and pinned to 1.25.0. MCP refresh changes preserve SDK-owned identity/collision handling. Both READMEs, bilingual development/getting-started/reference guides and load-bearing rationale were synchronized; [hunk/checklist receipt](../../architecture/sdk-1.25.0-upgrade.md) records the detailed compatibility evidence. Supervision/spend record: [`docs/iteration-log.md`](../../iteration-log.md), heading `2026-11-16 — SER-131 SDK 1.25.0 upgrade supervision`.
 
 ### Notes / blockers / abandonment reason
 

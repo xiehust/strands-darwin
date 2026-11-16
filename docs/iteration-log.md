@@ -3994,3 +3994,57 @@ Exact cost receipt: `cost: total=1.5507 input=0.0003 output=0.2363 cacheRead=0.6
 One invocation totals **725,664 exclusive-bucket tokens** and approximately **1.5507 USD**. Displayed cost components sum to the reported total, residual 0.0000; no unknown bucket. Host inference is separate.
 
 Outcome: repair independently accepted; prepare the matching annotated v0.0.53 tag and publish through the unchanged workflow. Never bypass a failed gate or claim release success before checking npm and GitHub.
+
+## 2026-11-16 — SER-131 SDK 1.25.0 upgrade supervision
+
+User-directed SDK batch from [research_2026-11-16.md](research/research_2026-11-16.md), score 10, priority 171. The earlier clean-tree halt was resolved by the user's explicit `commit it`: Host committed only the existing presentation as `9674a69`, after ZIP integrity/slide XML checks, without changing its content. Host's first baseline passed typecheck but failed the new research record's metadata validator; the Host corrected only its own labels/headings (`e775fac`) and reran focused `verify-skills`, typecheck and the complete fast gate successfully (`bg-63911ed1-d6bc-4316-8e81-e9ec1fa88ade`). No SDK change was delegated onto a red baseline.
+
+Fresh source-launched developer worker **`session-20261116-030950379`**, `--yolo --context-offload`, no model-call ceiling. Base **`72f310fdaa6ccd8afe041ec7363b59da2969baca`** includes only the status/receipt update after that green baseline. The initial task **`bg-542dc68a-cc50-436f-bfbf-edd57d8465fb`** exited 1 on exact provider error `The server had an error while processing your request. Sorry about that!`. The automatic same-request retry **`bg-2a383bc6-4212-40fe-93cf-0a86b5b23ae8`**, with the captured explicit session and no compaction, exited 0. Both outputs were read and fully drained. This was one direction/session with one transient retry, not an acceptance correction or another direction.
+
+| Milestone | Accepted commit | Independent Host acceptance |
+|---|---|---|
+| Upgrade exact SDK pin and rebased patch to 1.25.0, preserving runtime contracts and identity-aware MCP refresh | `375765f2586d0625c36ba196da43f3fe41a3f645` | Reviewed explicit base/result diff and history (only this child commit; no other writer). Task `bg-b40f6985-040e-4748-884e-a4fdd162d077` ran 04:33:26–05:00:39 UTC and exited 0: frozen installation, typecheck, complete fast suite, real registry package installation, four required TUI scenarios, cancellation diagnostic, build, built CLI version and clean diff/status. |
+
+### Independent acceptance details
+
+Host reran exactly:
+
+- `pnpm install --frozen-lockfile` and `pnpm typecheck`.
+- Full `pnpm test`, including the changed stream, reasoning, offload, MCP refresh, collaboration synchronization and diagnostics suites, alongside every other registered fast suite.
+- `pnpm tsx spike/verify-npm-package.ts`: actual npm pack/temporary-prefix registry install, every patched SDK file byte-identical, installed CLI smoke and unpatched refusal; exit 0.
+- `AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts completion` (84 passed), `compacting` (5), `bashExit` (3), `cancelThenContinue` (5); all exit 0, none skipped.
+- `AWS_REGION=us-west-2 pnpm tsx spike/probe-cancel-exit.ts`: observed exit **0**, with `cancelling after 3 text deltas`, `stopReason: cancelled`, `shutdown done`, and only `FSReqPromise` active. The header's legacy `STILL ALIVE`/exit-7 branch was not observed. No inference that every provider is now leak-free; the production exit backstop is unchanged.
+- `pnpm build`, `node dist/src/cli.js --version` (`darwin 0.0.53`), and clean `git diff --exit-code`/status. Installed `dist` and its generated SDK 1.25.0 patch are current.
+
+Host independently compared patch added/removed lines by package file: **54 original hunks, 56 new hunks, the same 18 files**; only `models/bedrock.js` and `models/openai/responses-adapter.js` change semantic patch lines. The former removes a duplicate upstream unsigned-Claude guard while retaining provenance rejection; the latter extends provenance to both upstream formatting paths. Shell, file-editor and legacy-offloader hunks retain their bytes. Patch size is **92,191 bytes**, SHA-256 **`2b114ce7af1e9f4a27c5bea0388a86a52452f347f53bd78efd3ca6d419068b6a`**, matching the lock.
+
+A parsed old/new lock graph independently confirms **26 changed/new snapshots**, all inside the new SDK dependency closure, and **16 removed snapshots**, all inside the old closure; no unresolved dependency edges. Only the SDK direct importer changes. The lock's separate package-manager document remains identical. Host's first graph-inspection command used a single-document YAML parser and failed; after observing the two documents it compared the package-manager document and parsed the project document separately. This was a read-only inspection error, not a package/test failure.
+
+The only Darwin implementation changes outside the patch are the two existing MCP wrappers: initial registration now runs through the SDK callback so identity tracking and foreign same-name collision protection remain authoritative. Extended real-MCP tests exercise refresh, foreign replacement preservation and later readmission. No copied SDK loop, expanded tool catalogue, permission change, model default change, or new storage/compaction feature.
+
+Worker evidence, including three incomplete full-gate attempts and targeted fixes before the final green gate, remains in [sdk-1.25.0-upgrade.md](architecture/sdk-1.25.0-upgrade.md). Host's first independent acceptance passed; no Host implementation edit or focused correction was needed.
+
+### Documentation wrap-up
+
+Accepted commit synchronizes both READMEs, English/Chinese development and getting-started guides, both reference pages (retaining the existing fileEditor despite upstream deprecation), load-bearing rationale, and the upgrade checklist/hunk receipt. No additional docs sync is needed. AGENTS policy/index remains unchanged at 32,638 bytes; no new load-bearing invariant or permission-policy edit. Host owns the research/backlog/iteration-log closure separately.
+
+### Worker invocation spend
+
+| Managed task | Outcome | input | output | cacheRead | cacheWrite | Approximate USD total |
+|---|---|---:|---:|---:|---:|---:|
+| `bg-542dc68a-cc50-436f-bfbf-edd57d8465fb` | provider error, exit 1 | 64 | 19,071 | 3,959,625 | 197,043 | 7.3769 |
+| `bg-2a383bc6-4212-40fe-93cf-0a86b5b23ae8` | success, exit 0 | 96 | 30,169 | 12,733,846 | 322,190 | 18.2706 |
+| **Aggregate** | one transient retry | **160** | **49,240** | **16,693,471** | **519,233** | **25.6475** |
+
+Exact receipts:
+
+```text
+usage: input=64 output=19071 cacheRead=3959625 cacheWrite=197043
+cost: total=7.3769 input=0.0006 output=0.9536 cacheRead=3.9596 cacheWrite=2.4630 model=global.openai.gpt-6-astra pricing=global.openai.gpt-6-astra
+usage: input=96 output=30169 cacheRead=12733846 cacheWrite=322190
+cost: total=18.2706 input=0.0010 output=1.5085 cacheRead=12.7338 cacheWrite=4.0274 model=global.openai.gpt-6-astra pricing=global.openai.gpt-6-astra
+```
+
+Computed exclusive-bucket total: **17,262,104 tokens**. Approximate USD components aggregate to input **0.0016**, output **2.4621**, cacheRead **16.6934**, cacheWrite **6.4904**, reconciling to reported **25.6475**. Individual rounded component residuals are +0.0001 and −0.0001 USD, aggregate zero. No missing or unknown receipt bucket. These receipts cover the two worker processes only, not Host inference or separate live verification calls. Both workers emitted an existing AgentCore in-flight/interrupted-state diagnostic at exit; this upgrade did not inspect or repair cloud-memory state and makes no cloud-health claim.
+
+**Halt: batch exhausted.** SER-131 is `done`; no direction was abandoned, and no unfinished routed record remains. The two below-gate ideas (file-tool replacement 3, server compaction 0) were report-only rejections. Commit closure records, push the current branch once normally, and verify `git log @{u}..` is empty before reporting. The push also includes previously pending ancestor commits on main; those are not attributed to this worker. No force push, release, tag or package publication.
