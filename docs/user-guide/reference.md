@@ -418,6 +418,9 @@ Pinned by `spike/verify-permission-modes.ts`.
 
 ## File edits
 
+SDK 1.25.0 deprecates `fileEditor`, but Darwin deliberately keeps its existing name,
+operations and permission behavior; the new upstream `read`/`write`/`edit` tools are not registered.
+
 The pinned SDK checks the **whole existing UTF-8 file content** before `fileEditor view`,
 `str_replace` or `insert`: content over **1,048,576 bytes (1 MiB)** is rejected, even for a
 one-line view or a tiny replacement/insert string. `create` does not share this existing-content

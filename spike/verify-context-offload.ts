@@ -16,6 +16,7 @@ import path from 'node:path';
 import {
   Agent,
   ContextWindowOverflowError,
+  InjectedBlock,
   Message,
   Model,
   SummarizingConversationManager,
@@ -547,6 +548,12 @@ try {
     (agent as unknown as { _conversationManager: unknown })._conversationManager instanceof SummarizingConversationManager
     && agent.contextManager === undefined);
   assert('offload storage is plugin-local, not an agent-wide shared stash', agent.storage === undefined);
+  assert('the upgrade does not vend the new read/write/edit/stop tools',
+    ['read', 'write', 'edit', 'stop'].every((name) => !defaultRuntime.info.toolNames.includes(name)));
+  assert('Darwin still supplies its own maxTokens instead of adopting ModelInfo output defaults',
+    agent.model.getConfig().maxTokens === defaultRuntime.config.maxTokens);
+  assert('the default prompt does not adopt SDK temporary InjectedBlock messages',
+    agent.messages.every((message) => message.content.every((block) => !(block instanceof InjectedBlock))));
   const originalModel = agent.model;
   const replacementModel = new OneToolCallModel();
   assert('auxiliary calls default to the current main model', agent.auxModel === originalModel);
@@ -614,6 +621,21 @@ try {
   assert('the process override does not mutate loaded config', forcedOn.config.contextOffload === false);
 } finally {
   await forcedOn.shutdown();
+}
+
+header('SDK 1.25 restore: InjectedBlock is distinct from text and unknown data survives');
+{
+  const data = { role: 'user' as const, content: [
+    { text: 'literal prompt' },
+    { injected: { text: 'fixture context', source: 'sdk-upgrade-test' } },
+    { futureContent: { value: 'opaque' } },
+  ] };
+  const restored = Message.fromJSON(data as Parameters<typeof Message.fromJSON>[0]);
+  const injected = restored.content[1];
+  assert('restored injected text is not a TextBlock and keeps its nested data',
+    injected instanceof InjectedBlock && !(injected instanceof TextBlock) && injected.injected.text === 'fixture context');
+  assert('restored unknown content serializes without data loss',
+    isDeepStrictEqual(JSON.parse(JSON.stringify(restored)).content, data.content));
 }
 
 await rm(ROOT, { recursive: true, force: true });

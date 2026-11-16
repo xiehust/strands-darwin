@@ -39,19 +39,21 @@ manager, hooks and `InvokeModelStage` middleware (model retry). If a change seem
 below and its `spike/` script first — every non-obvious SDK behavior this project relies on has
 a runnable script that proves it.
 
-The pinned SDK is `1.21.0` (SER-127); Zod's declared range is `^4.5.4` to meet its
-raised peer minimum. The rebase retains all 54 hunks across 18 files: every added/removed
-patch line is identical to the 1.20.0 patch, with only upstream context/offsets and blob
-hashes changing. Pristine upstream changed four of those files (root JS/types exports,
-Bedrock's opt-in strict tools, OpenAI chat usage on the finish-reason chunk); none replaces
-a local hunk. The offloader and reasoning adapters remain unchanged upstream. The
+The pinned SDK is `1.25.0` (SER-131); Zod's declared range remains `^4.5.4`.
+The [upgrade receipt](sdk-1.25.0-upgrade.md) maps every old patch hunk to pristine upstream
+and its proving checks. The patch now has 56 hunks across 18 files: Responses provenance
+is threaded through both upstream message formatters, and Bedrock's upstream unsigned-Claude
+reasoning filter replaces that part of the local guard. The Responses-origin tag guards remain.
+The legacy `ContextOffloader` and bash implementation are unchanged upstream; new offload
+conditions belong to the separate `ContextManager`, which Darwin does not select. The
 single-argument `LocalFileStorage` constructor remains supported. No shared stash,
-auxiliary-model selection, vended subagent/REPL, MCP task/progress UI or strict-tools
-default is enabled. Auxiliary calls continue to follow the current main model; children
-receive no parent storage. Bounded MCP prompt discovery still uses raw single-page
-requests, not the new default-aggregating convenience methods. Regression checks include
-`verify-sdk-chat-usage.ts` (real loopback SSE, both usage placements) and
-`verify-context-offload.ts` (parent/recipe-child defaults and isolation).
+auxiliary-model selection, new read/write/edit/stop tools, server-side summarization,
+invocation limits, temporary-message injection or strict-tools default is enabled. Darwin
+still supplies its configured model and `maxTokens`, rather than adopting SDK model-info
+defaults. Auxiliary calls follow the current main model; children receive no parent storage.
+Bounded MCP prompt discovery still uses raw single-page requests. Regression checks include
+`verify-sdk-chat-usage.ts`, `verify-sdk-stream-compat.ts`, `verify-responses-reasoning.ts`
+and `verify-context-offload.ts` (parent/recipe-child defaults and isolation).
 
 Darwin continues to pass `conversationManager` with
 `SummarizingConversationManager` and its existing `ContextOffloader` plugin; it does not
@@ -152,7 +154,7 @@ SDK's `DefaultModelRetryStrategy` sleeps inside its `AfterModelCallEvent` callba
 `Agent._streamCore` runs hook callbacks *before* yielding the event. Originally a throttled attempt
 reached the driver only after its whole backoff, cancellation during that sleep was ineffective,
 and a Bedrock pre-stream `ThrottlingException` (a plain `ModelError` with that exception as `cause`)
-was never retried. SDK 1.21.0 includes upstream's cancellation-aware sleep, but still waits inside
+was never retried. SDK 1.25.0 includes upstream's cancellation-aware sleep, but still waits inside
 the hook; it does not replace Darwin's pre-wait publication, cause classification or driver notices.
 `AgentRuntime.create` and
 `buildRecipeChild` therefore pass `retryStrategy: null` (the documented opt-out; the SDK's duplicate
@@ -431,7 +433,7 @@ Trajectory remains optional observation and is never used to reconstruct message
 
 **The `/compact` manager is built per call, and an unfocused call is configured exactly as before the focus existed.** `SummarizingConversationManagerConfig.summarizationSystemPrompt` is constructor-only in the SDK, so `AgentRuntime.compact(focus?)` asks `createCompactionManager(preserveRecentMessages, focus)` (`src/agent/compact.ts`) for a fresh manager every time instead of holding one for the process. Without a focus the config has the two keys it always had — `summaryRatio: 0.8` and `preserveRecentMessages` — and the SDK applies its own `DEFAULT_SUMMARIZATION_PROMPT`; the request is byte-identical to a pre-SER-051 `/compact`, and headless `--compact-before` only ever takes this path. With a focus (trimmed, at most 400 code points; longer is a local notice and nothing runs — no hook, no model call, no `compacting` state), the system prompt is the SDK default verbatim, a blank line, one fixed heading, and the focus as plain text. The focus is never parsed as a sub-command, never added to `PreCompact`/`PostCompact` payloads (`trigger: manual` unchanged), and the upstream text-only conversion inside `generateSummary` covers focused and unfocused summaries alike.
 
-The default prompt is reached only through the package root: the SDK declares it in a module its `exports` map does not expose, so the pinned `patches/@strands-agents__sdk@1.21.0.patch` gains one re-export line in `dist/src/index.js` and one in `dist/src/index.d.ts`. A copied prompt string would drift from what the SDK sends unfocused, and a deep import is unresolvable — both are refused by `spike/verify-compact.ts`, which asserts over the source. The TUI records `/compact <focus>` as it records `/compact` (one `userInput` transcript action, never `AgentRuntime.send`) and the busy refusal still matches on the first word. Spec: `backend/strands-sdk-contracts.md` § `/compact` per-call manager. Checks: `verify-compact.ts`, `verify-help-command.ts`, free `tui completion`, live `tui compacting`; after any patch change, `pnpm install --frozen-lockfile` + `pnpm typecheck`.
+The default prompt is reached only through the package root: the SDK declares it in a module its `exports` map does not expose, so the pinned `patches/@strands-agents__sdk@1.25.0.patch` gains one re-export line in `dist/src/index.js` and one in `dist/src/index.d.ts`. A copied prompt string would drift from what the SDK sends unfocused, and a deep import is unresolvable — both are refused by `spike/verify-compact.ts`, which asserts over the source. The TUI records `/compact <focus>` as it records `/compact` (one `userInput` transcript action, never `AgentRuntime.send`) and the busy refusal still matches on the first word. Spec: `backend/strands-sdk-contracts.md` § `/compact` per-call manager. Checks: `verify-compact.ts`, `verify-help-command.ts`, free `tui completion`, live `tui compacting`; after any patch change, `pnpm install --frozen-lockfile` + `pnpm typecheck`.
 
 **The reduce loop terminates on evidence and treats a swallowed failure as failure (SER-052).** `compactConversation` used to loop `while (messages.length > preserveRecentMessages + 1)` on `reduce()`, assuming every `true` shrank the list; but the SDK summarizes at most 80% of the list (`summaryRatio` clamped to `[0.1, 0.8]`), so a 2-message history can only ever become "a summary of the oldest message plus the newest" — same count, less fidelity, forever (a Host probe made 26 paid, uncancellable summarizer calls). Now every pass keeps a shallow snapshot; a pass that returns `true` without lowering the count is undone (identity kept) and ends the loop, so `compacted` is true only when the count really dropped. The guard is observational rather than a copy of the SDK's split arithmetic, so it stays right if the SDK changes; the recorded consequence is that with `preserveRecentMessages: 0` the floor is two messages and finding it costs one summarizer call, and 2 messages / preserve 0 is an honest `already compact` after exactly one call. Separately, darwin calls `reduce()` without `error`, so the SDK's proactive path swallows any summarization error and returns `false`; inside the loop the SDK has no other `false`, so it is thrown as `SWALLOWED_SUMMARIZATION_FAILURE` and everything is restored — never `compacted: true` from an earlier pass, never a partial result. A sentinel `error` was rejected because it must be a `ContextWindowOverflowError`, the SDK writes it into the thrown error's `.cause`, and `failureFromError` would print that fabricated cause in structured headless output; the real cause already reaches the user through the routed `sdk warn` line. The bug was masked from `780ec93` until `f4e3271` scrubbed reasoning blocks from the summary: the provider rejection that used to fail the second pass had been terminating the loop by accident. Spec: `backend/strands-sdk-contracts.md` § explicit `/compact` scenario, `backend/error-handling.md`. Checks: `verify-compact.ts` (2 messages / preserve 0 → one call, no-op; 16 / preserve 0 → three calls, pass 3 undone; second- and first-pass failure reject and restore; focused manager shares both), live `tui compacting` (seeds two turns, `preserveRecentMessages: 1`, waits for a real `4 → 2`).
 
@@ -903,7 +905,10 @@ the current root once and each safe explicit absolute target once, requiring a n
 SQLite database whose bounded read-only bytes contain the SQLite header and CodeGraph schema
 records. Unavailable targets return one bounded successful instruction to use ordinary shell/file
 inspection; usable targets `yield*` the original tool unchanged. The existing SDK refresh callback is
-decorated so later tool-list changes receive the same wrapping without replacing old-name removal.
+decorated so later tool-list changes receive the same wrapping. Since SDK 1.25 tracks registered
+object identities, initial wrappers are also registered through that callback, not `addOrReplace`:
+the SDK owns both initial replacement and later swaps, including preserving another source's
+same-name tool and readmitting a skipped name only on a later refresh. No extra discovery occurs.
 This is neither an intervention nor an alternate MCP lifecycle: all
 other clients/tools, permissions, startup/disconnect, `/mcp`, and parent/child policy remain as they
 were. Required check: `spike/verify-codegraph-preflight.ts` (in `pnpm test`).
@@ -921,7 +926,8 @@ preserving the query with an empty result list and zero total. Everything else �
 non-empty bytes, stream events, malformed input, transport/auth/timeout and other provider errors —
 passes through unchanged. Applying before child-catalogue capture and decorating the SDK refresh
 callback gives parent and child agents one policy without changing permissions, hooks, retry logic,
-trajectory, output, or MCP lifecycle. Required check: `spike/verify-web-search-empty-results.ts`
+trajectory, output, or MCP lifecycle. As with CodeGraph, SDK 1.25's callback registers the initial
+wrappers so its identity-based source protection remains authoritative on subsequent refreshes. Required check: `spike/verify-web-search-empty-results.ts`
 (in `pnpm test`).
 
 
@@ -2135,9 +2141,9 @@ Claude, Converse, Anthropic and Chat request bodies are byte-identical to the un
 (measured by formatting the same histories under both patches); the one intended difference is
 that drop. The trajectory already reduces any reasoning block to bare presence, so replay and
 `/export` are unchanged and neither tags nor blobs reach the record; the session snapshot keeps
-them, which is what `--resume` restores. Out of scope and unchanged: Claude-signed reasoning
-sent to Kimi on Converse is refused by Bedrock (`doesn't support the
-reasoningContent.reasoningText.signature field`), exactly as without the patch. Checks:
+them, which is what `--resume` restores. SDK 1.25.0 additionally drops Claude-signed reasoning
+before sending to Kimi on Converse; upstream owns this compatibility filter and the unsigned-Claude
+filter. Neither replaces the local Responses provenance boundary. Checks:
 `verify-responses-reasoning.ts` (offline, in `pnpm test`: capture, tag, replay order,
 foreign/untagged/summary/stateful drop, the three other formatters, golden no-tag shapes,
 snapshot round-trip, trajectory projection) and `verify-responses-reasoning-live.ts` (*live*:
@@ -2620,7 +2626,7 @@ applies — the SDK patch and, since the terminal-narrowing redraw (see *TUI —
 budget*), `patches/ink@7.1.1.patch`; `pnpm build` ends with `node dist/src/npm-package/generate-patch.js`, which rewrites
 every one of them into patch-package's dialect (`src/npm-package/patch-package-format.ts`: only the
 `diff --git`/`---`/`+++` paths gain `node_modules/<package>/`, the file name becomes
-`@strands-agents+sdk+1.21.0.patch` / `ink+7.1.1.patch`, idempotent) under `dist/patches/` — a gitignored build
+`@strands-agents+sdk+1.25.0.patch` / `ink+7.1.1.patch`, idempotent) under `dist/patches/` — a gitignored build
 artifact, never a second hand-maintained copy. `postinstall` is
 `patch-package --patch-dir dist/patches`, and both edges of the developer path hold by
 patch-package's own behaviour: an absent directory (fresh clone, `postinstall` runs before any
@@ -2684,7 +2690,7 @@ untouched (the lockfile's `patch_hash` changes, as it must). On any SDK upgrade,
 whether upstream shipped a provenance-aware reasoning round-trip — harness-sdk#4598 (filed from
 the origin report: the Bedrock event name plus cross-provider safety) or #3389 (the OpenAI
 round-trip) — and if so delete these hunks instead of porting them; a duplicate would tag or
-replay twice. SDK 1.21.0 was checked during SER-127 and still does not cover it: its Responses formatter drops reasoning, and its mapper has neither provenance nor encrypted-item capture.
+replay twice. SDK 1.25.0 was checked during SER-131: its Responses formatter still drops reasoning, and its mapper has neither provenance nor encrypted-item capture. The local provenance hunks remain, including both ordinary and explicit-cache formatting paths; the duplicate unsigned-Claude check is retired because upstream `BedrockModel._rejectsReasoningBlock` now filters it before formatting. The retained tag guard also protects opaque profile IDs for which upstream cannot infer a provider.
 
 ## Process exit
 
@@ -2726,8 +2732,10 @@ from `RuntimeOptions.backgroundCompletionWakes && config.backgroundTaskWake !== 
 the TUI driver): the parent TUI says one `<task-notification>` turn follows once idle, while headless,
 the dev REPL, children and the key off keep the byte-identical "background completion does not
 resume the agent" — the manager itself never continues or calls the model.
-Neither form owns or delays process cleanup. A cancelled model stream's socket has no public cleanup,
-so `cli.ts` arms an unref'd 500ms `process.exit` fallback *after* shutdown completes. Don't change these paths
+Neither form owns or delays process cleanup. `cli.ts` retains an unref'd 500ms `process.exit`
+fallback *after* shutdown completes for residual provider resources. The SER-131 cancellation
+probe on SDK 1.25.0 exited naturally with only `FSReqPromise` after shutdown, rather than its
+legacy socket/exit-7 branch; this single observation does not retire the backstop. Don't change these paths
 without re-running `spike/verify-background-bash.ts`, `spike/probe-cancel-exit.ts`,
 `spike/verify-clear-session.ts`, and the `bashExit` / `cancelThenContinue` TUI scenarios.
 

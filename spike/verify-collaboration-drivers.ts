@@ -153,6 +153,9 @@ try {
     assert.equal(requests(root).length, recapCalls, 'peer /recap is a local provenance refusal, not ordinary or auxiliary inference');
     assert(tui.frame.includes('you> retained draft'), 'peer recap refusal preserves the human draft');
     tui.send('\u0015');
+    // Observe the key before submitting more text: otherwise the PTY may coalesce
+    // Ctrl+U and the next prompt, leaving `retained drafthold peer queue` on the wire.
+    await tui.waitUntil(() => /(?:^|\n)you>[ \t]*(?:\r?\n|$)/.test(tui.frame), { settleMs: 100 });
     console.log('PASS SER-130 peer /recap provenance notice, zero model requests and retained draft');
     const busy = tui.mark(); tui.submit('hold peer queue');
     await tui.waitFor('working…', { from: busy, settleMs: 100 });

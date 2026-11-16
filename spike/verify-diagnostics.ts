@@ -9,7 +9,7 @@
  * the same real turn with no tap installed and finding no file — because the SDK's
  * root export map exposes `configureLogging` only, so there is no logger binding a
  * test could inspect instead. Real `warn` output comes from two real SDK sources as
- * well (`new BedrockModel({})`'s default-model nudge and `Model.estimateUtilization`'s
+ * well (`new BedrockModel({ maxTokens: 1024 })`'s default-model nudge and `Model.estimateUtilization`'s
  * missing-window nudge), neither of which touches the network.
  *
  * No model call, no network, no writes outside this suite's own temp directories.
@@ -342,8 +342,10 @@ async function warnRouting(): Promise<void> {
   try {
     // A real SDK warning, offline: constructing a Bedrock model without a model id
     // makes the SDK nudge about the default it picked. `warnOnce` dedupes per process,
-    // so this fires exactly once — which is why it is used once, here.
-    new BedrockModel({});
+    // so this fires exactly once — which is why it is used once, here. Supply
+    // maxTokens to isolate this warning from SDK 1.25's new output-default nudge,
+    // just as Darwin always supplies its configured output limit.
+    new BedrockModel({ maxTokens: 1024 });
   } finally {
     setSdkVerboseSink(undefined);
     restore();

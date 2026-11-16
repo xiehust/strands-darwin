@@ -27,33 +27,40 @@ export class WebSearchEmptyResults {
     const searchClients = clients.filter((client) => client.clientName === WEB_SEARCH_CLIENT_NAME);
     if (searchClients.length === 0) return 0;
 
-    const replacements = agent.tools.flatMap((candidate) => {
-      const wrapped = this.wrap(candidate, searchClients);
-      return wrapped === candidate ? [] : [wrapped];
-    });
-    if (replacements.length > 0) agent.toolRegistry.addOrReplace(replacements);
-
-    // Preserve the SDK callback's remove/add lifecycle while ensuring a later
-    // tools/list_changed refresh cannot restore the provider's raw search tool.
-    for (const client of searchClients) this.wrapRefreshCallback(client);
-    return replacements.length;
+    let replacements = 0;
+    for (const client of searchClients) {
+      const current = agent.tools.filter((candidate) =>
+        candidate instanceof EmptyResultSearchTool ? candidate.owner === client : mcpOwner(candidate, [client]) === client);
+      const next = current.map((candidate) => this.wrap(candidate, [client]));
+      const changed = next.filter((candidate, index) => candidate !== current[index]).length;
+      // SDK 1.25 tracks registered object identities, not old names. Let its own
+      // callback register the initial wrappers too, so future swaps recognize them
+      // without removing another source's same-name replacement.
+      this.wrapRefreshCallback(client, changed > 0 ? next : undefined);
+      replacements += changed;
+    }
+    return replacements;
   }
 
   private wrap(candidate: Tool, clients: readonly McpClient[]): Tool {
     const owner = mcpOwner(candidate, clients);
     if (owner === undefined || !clients.includes(owner)) return candidate;
     return mcpServerToolName(owner, candidate) === WEB_SEARCH_TOOL_NAME
-      ? new EmptyResultSearchTool(candidate)
+      ? new EmptyResultSearchTool(candidate, owner)
       : candidate;
   }
 
-  private wrapRefreshCallback(client: McpClient): void {
+  private wrapRefreshCallback(client: McpClient, initialTools?: Tool[]): void {
     const internal = client as unknown as {
       _onToolsChanged?: (oldTools: string[], newTools: Tool[]) => void;
       onToolsChanged: ((oldTools: string[], newTools: Tool[]) => void) | undefined;
     };
     const previous = internal._onToolsChanged;
-    if (previous === undefined) return;
+    if (previous === undefined) {
+      if (initialTools !== undefined) throw new Error('Web-search normalization requires the initialized SDK refresh callback');
+      return;
+    }
+    if (initialTools !== undefined) previous(initialTools.map((tool) => tool.name), initialTools);
     internal.onToolsChanged = (oldTools, newTools) => {
       previous(oldTools, newTools.map((candidate) => this.wrap(candidate, [client])));
     };
@@ -65,7 +72,7 @@ class EmptyResultSearchTool extends Tool {
   readonly description: string;
   readonly toolSpec: ToolSpec;
 
-  constructor(private readonly original: Tool) {
+  constructor(private readonly original: Tool, readonly owner: McpClient) {
     super();
     this.name = original.name;
     this.description = original.description;

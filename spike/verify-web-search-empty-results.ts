@@ -348,6 +348,22 @@ async function contract(root: string): Promise<void> {
         message.content.some((block) => block.type === 'toolResultBlock' && block.status === 'error'))) &&
       value.calls.get('web-search:empty') === callsBeforeDenial);
     await subagents.shutdown();
+
+    // Keep upstream identity-based source protection; never reclaim a name just
+    // because this MCP client used to register it.
+    const collision = new LocalSearch('web-search_search');
+    value.agent.toolRegistry.addOrReplace([collision]);
+    await (value.searchClient as unknown as { _handleToolsChanged(): Promise<void> })._handleToolsChanged();
+    assert('refresh does not remove or overwrite another source occupying a former MCP name',
+      tool(value.agent, collision.name) === collision && tool(value.agent, foreign.name) === foreign);
+    value.agent.toolRegistry.remove(collision.name);
+    await (value.searchClient as unknown as { _handleToolsChanged(): Promise<void> })._handleToolsChanged();
+    const recovered = tool(value.agent, collision.name);
+    const recoveredResult = await runTool(value.agent, recovered, { query: 'readmitted query', mode: 'empty' });
+    assert('a skipped name is readmitted on the next refresh with normalization intact',
+      recovered !== collision && recovered !== refreshed && recovered.constructor.name !== 'McpTool' &&
+      recoveredResult.result.status === 'success' &&
+      text(recoveredResult.result) === JSON.stringify({ query: 'readmitted query', results: [], totalResults: 0 }));
   } finally {
     await closeFixture(value);
   }

@@ -1,8 +1,8 @@
 diff --git a/dist/src/index.d.ts b/dist/src/index.d.ts
-index 1918f11258bdad49dee3e3552440a48ff0feba80..5f24f38fa0bd7dec9dc8faa471ae727db166d1a7 100644
+index efdd001a474c19b92c1aee8a02ed40f0a78c96f1..909f39e2d0afce9f248b2327fd4836515caf5e7f 100644
 --- a/dist/src/index.d.ts
 +++ b/dist/src/index.d.ts
-@@ -67,6 +67,7 @@ export { ConversationManager, type ProactiveCompressionConfig, type Conversation
+@@ -70,6 +70,7 @@ export { ConversationManager, type ProactiveCompressionConfig, type Conversation
  export { NullConversationManager } from './conversation-manager/null-conversation-manager.js';
  export { SlidingWindowConversationManager, type SlidingWindowConversationManagerConfig, } from './conversation-manager/sliding-window-conversation-manager.js';
  export { SummarizingConversationManager, type SummarizingConversationManagerConfig, } from './conversation-manager/summarizing-conversation-manager.js';
@@ -11,7 +11,7 @@ index 1918f11258bdad49dee3e3552440a48ff0feba80..5f24f38fa0bd7dec9dc8faa471ae727d
  export type { Logger } from './logging/types.js';
  export { type McpClientOptions, type McpListOptions, type McpListToolsOptions, type McpProgress, type McpProgressCallback, type McpToolFilterCallback, type McpToolFilters, type McpToolMatcher, type McpClientConfig, type McpClientCredentials, type McpTransport, type McpCallToolOptions, type TasksConfig, type McpConnectionState, type McpLoadServersOptions, type McpServerConfig, type SerializableMcpToolFilters, McpClient, McpTaskCancelledError, McpTaskFailedError, } from './mcp/index.js';
 diff --git a/dist/src/index.js b/dist/src/index.js
-index aaa869eda7dc0f4b408c9f5085ea96e960a84c50..ca4c9519a51fd5528b27e051e7958e316e634419 100644
+index bcfae4d52b91f0de2b7e118ec76092fdf8b2ded8..9a2d0c96bc91fb5e669907bd9b7a1886b66b213c 100644
 --- a/dist/src/index.js
 +++ b/dist/src/index.js
 @@ -57,6 +57,7 @@ export { ConversationManager, } from './conversation-manager/conversation-manage
@@ -23,10 +23,10 @@ index aaa869eda7dc0f4b408c9f5085ea96e960a84c50..ca4c9519a51fd5528b27e051e7958e31
  export { configureLogging } from './logging/logger.js';
  // MCP Client types and implementations
 diff --git a/dist/src/models/anthropic.js b/dist/src/models/anthropic.js
-index d3b97dfe1f49f9c8251f4d74a2640b7684691f98..e747a7ac319ba38ce340aec08800dc751f10c4ee 100644
+index fe1ca5dd5d8ba9d2a2af47c0c2eeb11a181a4881..dc45112656c1dd9141d6631778b7275bb14abb43 100644
 --- a/dist/src/models/anthropic.js
 +++ b/dist/src/models/anthropic.js
-@@ -682,6 +682,11 @@ export class AnthropicModel extends Model {
+@@ -1073,6 +1073,11 @@ export class AnthropicModel extends Model {
                  };
              }
              case 'reasoningBlock':
@@ -39,34 +39,27 @@ index d3b97dfe1f49f9c8251f4d74a2640b7684691f98..e747a7ac319ba38ce340aec08800dc75
                      return {
                          type: 'thinking',
 diff --git a/dist/src/models/bedrock.js b/dist/src/models/bedrock.js
-index 9f3501f3b95ca8fd13e3ab8675b0c0860acb8c35..ead8a030b4096627730ca41a6de68aea9b87b1c2 100644
+index 49031689ba7ada7acc5f4ea931be053a1e7f242c..0e34b89daf925858a8201601ef9a3c0e6c4b8a4d 100644
 --- a/dist/src/models/bedrock.js
 +++ b/dist/src/models/bedrock.js
-@@ -949,6 +949,19 @@ export class BedrockModel extends Model {
+@@ -1126,6 +1126,12 @@ export class BedrockModel extends Model {
                  };
              }
              case 'reasoningBlock': {
-+                // darwin patch (SER-101): Responses-origin reasoning (provenance tag in
-+                // `signature`) is never sent to Converse, and a Claude model rejects a
-+                // signature-less thinking block (`thinking.signature: Field required`),
-+                // which is what another Converse model's reasoning (Kimi) carries.
++                // darwin patch (SER-101): Responses provenance is not an Anthropic
++                // signature, and must never reach Converse, including unknown profiles.
++                // Upstream _rejectsReasoningBlock owns unsigned Claude filtering now.
 +                if (typeof block.signature === 'string' && block.signature.startsWith('darwin-responses:')) {
-+                    return undefined;
-+                }
-+                if (block.signature === undefined &&
-+                    !block.redactedContent &&
-+                    /anthropic|claude/i.test(this._config.modelId ?? '')) {
-+                    logger.debug(`model_id=<${this._config.modelId}> | signature-less reasoning | dropping`);
 +                    return undefined;
 +                }
                  if (block.text !== undefined || block.signature !== undefined) {
                      return {
                          reasoningContent: {
 diff --git a/dist/src/models/openai/chat-adapter.js b/dist/src/models/openai/chat-adapter.js
-index fb16b465262638c7d97e874156058a856174752c..0ff778d68eaea576279c6850cf6a708386496261 100644
+index 900accb2abe4523d13861a00a2d62df153ffce1a..ee072b3ab4c1f1ad7ec9c404ec46c66548884589 100644
 --- a/dist/src/models/openai/chat-adapter.js
 +++ b/dist/src/models/openai/chat-adapter.js
-@@ -242,6 +242,12 @@ function formatChatMessages(messages) {
+@@ -244,6 +244,12 @@ function formatChatMessages(messages) {
                          break;
                      }
                      case 'reasoningBlock': {
@@ -92,23 +85,23 @@ index 17a473fe3bcdcc02e17cd95283c832d9021634c1..6e5cda23f672684b3926450322459279
  /**
   * Error patterns that indicate rate limiting.
 diff --git a/dist/src/models/openai/model.js b/dist/src/models/openai/model.js
-index 8f4a9b941008730c4e5a042f9e220edf74c2c6bb..820bbd62e6d9197c59370c53e4d8dd6a77d44ff0 100644
+index a09ae7052847894f0b23374c3c491ae899f732fc..7bcbad5135fbc5359bcd58305d9862159e58ca15 100644
 --- a/dist/src/models/openai/model.js
 +++ b/dist/src/models/openai/model.js
-@@ -205,7 +205,7 @@ export class OpenAIModel extends Model {
-         try {
-             const request = formatResponsesRequest(this._config, messages, options, this.stateful);
+@@ -252,7 +252,7 @@ export class OpenAIModel extends Model {
+             const stateful = this.stateful;
+             const request = formatResponsesRequest(this._config, messages, options, stateful, this.modelInfo);
              const stream = await this._client.responses.create(request, { signal: options?.cancelSignal });
 -            const state = createResponsesStreamState();
 +            const state = createResponsesStreamState(request.model);
              for await (const event of stream) {
-                 for (const sdkEvent of mapResponsesEventToSDK(event, state, this.stateful, options?.modelState)) {
+                 for (const sdkEvent of mapResponsesEventToSDK(event, state, stateful, options?.modelState)) {
                      yield sdkEvent;
 diff --git a/dist/src/models/openai/responses-adapter.d.ts b/dist/src/models/openai/responses-adapter.d.ts
-index a7b4edd12a5ac33277a5ad2c4bcea4c4d8c1ea7d..655e065df9823e8897759978a46cac8b2bee9d79 100644
+index 656dea6674a1f6d58a7cf2dc716ff7a924155c7c..898b86a7f4e115d84004ac9b9849638b7da561e4 100644
 --- a/dist/src/models/openai/responses-adapter.d.ts
 +++ b/dist/src/models/openai/responses-adapter.d.ts
-@@ -55,13 +55,32 @@ export interface ResponsesStreamState {
+@@ -57,13 +57,32 @@ export interface ResponsesStreamState {
          cacheWriteInputTokens?: number;
      } | null;
      stopReason: StopReason;
@@ -143,12 +136,12 @@ index a7b4edd12a5ac33277a5ad2c4bcea4c4d8c1ea7d..655e065df9823e8897759978a46cac8b
   * Maps a single Responses API stream event to zero or more SDK events. Mutates
   * `state` and, when `stateful` is `true`, writes `responseId` into `modelState`.
 diff --git a/dist/src/models/openai/responses-adapter.js b/dist/src/models/openai/responses-adapter.js
-index ddf156fe33b08dfb6a1dc265eb86f2fac31d9c53..c4cd19b5064de07722f88bb71874567061ed74ed 100644
+index 0f046114e8f68242b1ec1a0bf11ef6e9a8e6ce1c..f20fd9722f177556dd75f3d4a0b0acb08acf8882 100644
 --- a/dist/src/models/openai/responses-adapter.js
 +++ b/dist/src/models/openai/responses-adapter.js
-@@ -21,6 +21,72 @@ import { formatImageDataUrl, warnManagedParams as warnManagedParamsShared } from
- import { applyCacheConfig } from './cache.js';
- export const DEFAULT_RESPONSES_MODEL_ID = MODEL_DEFAULTS.openai.modelId;
+@@ -24,6 +24,72 @@ export const DEFAULT_RESPONSES_MODEL_ID = MODEL_DEFAULTS.openai.modelId;
+ /** Input content types that accept `prompt_cache_breakpoint` (gpt-5.6+). */
+ const CACHEABLE_INPUT_TYPES = new Set(['input_text', 'input_image', 'input_file']);
  const MANAGED_PARAMS = new Set(['model', 'input', 'stream', 'store']);
 +/**
 + * darwin patch (SER-101): provenance of reasoning captured on the Responses path.
@@ -219,16 +212,48 @@ index ddf156fe33b08dfb6a1dc265eb86f2fac31d9c53..c4cd19b5064de07722f88bb718745670
  /**
   * Logs a warning for each responses-managed key present in `params`.
   *
-@@ -35,7 +101,7 @@ export function warnManagedParams(params) {
-  * @internal
-  */
- export function formatResponsesRequest(config, messages, options, stateful) {
--    const input = formatResponsesMessages(messages);
-+    const input = formatResponsesMessages(messages, stateful ? undefined : (config.modelId ?? DEFAULT_RESPONSES_MODEL_ID));
+@@ -42,9 +108,12 @@ export function formatResponsesRequest(config, messages, options, stateful, mode
+     const { cacheConfig } = config;
+     const cachePoints = modelInfo.capabilities?.promptCaching === 'cachePoints';
+     const cacheMessages = cachePoints && cacheConfig !== undefined && cacheConfig.messagesTTL !== false;
++    // darwin patch (SER-101): both upstream formatting paths keep the same
++    // stateless, same-model provenance boundary; this does not enable caching.
++    const replayModelId = stateful ? undefined : (config.modelId ?? DEFAULT_RESPONSES_MODEL_ID);
+     const { input, explicitCache } = cacheMessages
+-        ? formatCacheableResponsesMessages(messages, options?.dynamicTrailingBlocks, cacheConfig.messagesTTL)
+-        : { input: formatResponsesMessages(messages), explicitCache: false };
++        ? formatCacheableResponsesMessages(messages, options?.dynamicTrailingBlocks, cacheConfig.messagesTTL, replayModelId)
++        : { input: formatResponsesMessages(messages, replayModelId), explicitCache: false };
      // User `params` are spread first so provider-managed fields (asserted
      // required by `ResponseCreateParamsStreaming` below) always win. The
      // managed-params warning fires at config time to surface the collision.
-@@ -111,11 +177,15 @@ export function formatResponsesRequest(config, messages, options, stateful) {
+@@ -127,14 +196,14 @@ export function formatResponsesRequest(config, messages, options, stateful, mode
+  * whether the request should default `prompt_cache_options.mode` to explicit; without a checkpoint or
+  * a temporary suffix, implicit caching stays so the request still caches.
+  */
+-function formatCacheableResponsesMessages(messages, dynamicTrailingBlocks = 0, messagesTTL) {
++function formatCacheableResponsesMessages(messages, dynamicTrailingBlocks = 0, messagesTTL, replayModelId) {
+     const ttl = typeof messagesTTL === 'string' && CACHE_LIFETIMES.has(messagesTTL) ? { ttl: messagesTTL } : {};
+     const input = [];
+     let hasCheckpoints = false;
+     for (const [index, { role, content }] of messages.entries()) {
+         const dynamicCount = role === 'user' && index === messages.length - 1 ? dynamicTrailingBlocks : 0;
+         const boundary = Math.max(0, content.length - dynamicCount);
+-        const items = formatResponsesMessages([new Message({ role, content: content.slice(0, boundary) })]);
++        const items = formatResponsesMessages([new Message({ role, content: content.slice(0, boundary) })], replayModelId);
+         normalizeToolOutputs(items);
+         const part = role === 'user' ? lastCacheablePart(items) : undefined;
+         if (part) {
+@@ -144,7 +213,7 @@ function formatCacheableResponsesMessages(messages, dynamicTrailingBlocks = 0, m
+             hasCheckpoints = true;
+         }
+         if (dynamicCount > 0) {
+-            const tail = formatResponsesMessages([new Message({ role: 'user', content: content.slice(boundary) })]);
++            const tail = formatResponsesMessages([new Message({ role: 'user', content: content.slice(boundary) })], replayModelId);
+             normalizeToolOutputs(tail);
+             appendDynamicContent(items, tail);
+         }
+@@ -189,11 +258,15 @@ function appendDynamicContent(items, tail) {
   * - Text/media → grouped in `{ role, content: [...] }`
   * - Tool calls → separate `{ type: 'function_call', ... }` items
   * - Tool results → separate `{ type: 'function_call_output', ... }` items
@@ -245,7 +270,7 @@ index ddf156fe33b08dfb6a1dc265eb86f2fac31d9c53..c4cd19b5064de07722f88bb718745670
          const contentItems = [];
          const toolCallItems = [];
          const toolResultItems = [];
-@@ -171,6 +241,11 @@ function formatResponsesMessages(messages) {
+@@ -249,6 +322,11 @@ function formatResponsesMessages(messages) {
                      break;
                  }
                  case 'reasoningBlock': {
@@ -257,7 +282,7 @@ index ddf156fe33b08dfb6a1dc265eb86f2fac31d9c53..c4cd19b5064de07722f88bb718745670
                      logger.warn('block_type=<reasoningBlock> | reasoning content is not yet supported in multi-turn conversations with the responses api');
                      break;
                  }
-@@ -179,6 +254,7 @@ function formatResponsesMessages(messages) {
+@@ -259,6 +337,7 @@ function formatResponsesMessages(messages) {
                  }
              }
          }
@@ -265,7 +290,7 @@ index ddf156fe33b08dfb6a1dc265eb86f2fac31d9c53..c4cd19b5064de07722f88bb718745670
          if (contentItems.length > 0) {
              if (role === 'assistant') {
                  // Only the string EasyInputMessage form is a valid assistant *input* shape
-@@ -303,12 +379,16 @@ function formatDocumentInput(docBlock) {
+@@ -385,12 +464,16 @@ function formatDocumentInput(docBlock) {
   *
   * @internal
   */
@@ -283,7 +308,7 @@ index ddf156fe33b08dfb6a1dc265eb86f2fac31d9c53..c4cd19b5064de07722f88bb718745670
      };
  }
  /**
-@@ -329,13 +409,13 @@ function mapResponsesUsage(usage) {
+@@ -411,13 +494,13 @@ function mapResponsesUsage(usage) {
          totalTokens: usage.total_tokens,
      };
      const cached = usage.input_tokens_details?.cached_tokens;
@@ -299,7 +324,7 @@ index ddf156fe33b08dfb6a1dc265eb86f2fac31d9c53..c4cd19b5064de07722f88bb718745670
          mapped.cacheWriteInputTokens = cacheWrite;
      }
      return mapped;
-@@ -366,22 +446,66 @@ export function mapResponsesEventToSDK(event, state, stateful, modelState) {
+@@ -448,22 +531,66 @@ export function mapResponsesEventToSDK(event, state, stateful, modelState) {
          case 'response.output_text.delta': {
              events.push(...switchContent('text', state.dataType));
              state.dataType = 'text';
@@ -366,7 +391,7 @@ index ddf156fe33b08dfb6a1dc265eb86f2fac31d9c53..c4cd19b5064de07722f88bb718745670
          case 'response.output_text.annotation.added': {
              // The SDK types `event.annotation` as `unknown` and doesn't export a
              // named annotation union, so we narrow structurally on the fields we use.
-@@ -395,6 +519,7 @@ export function mapResponsesEventToSDK(event, state, stateful, modelState) {
+@@ -477,6 +604,7 @@ export function mapResponsesEventToSDK(event, state, stateful, modelState) {
                  // a fresh TextBlock.
                  events.push(...switchContent('citations', state.dataType));
                  state.dataType = 'citations';
@@ -1473,7 +1498,7 @@ index 1be553288395c19e1251d86ef7c4d798c1917ace..6eeccf95f2a8666b0c8daaefaeac6ce5
  //# sourceMappingURL=types.d.ts.map
 \ No newline at end of file
 diff --git a/dist/src/vended-tools/file-editor/file-editor.js b/dist/src/vended-tools/file-editor/file-editor.js
-index c8f38b7acac37a781e1467a655e88834aa97b4ef..06cc4454899669805633df0ff0228b26b04532df 100644
+index 3c1976c218d188347522fd33f4375ab08720431c..014e2daec186d05040f353b903011600fa920a1f 100644
 --- a/dist/src/vended-tools/file-editor/file-editor.js
 +++ b/dist/src/vended-tools/file-editor/file-editor.js
 @@ -7,6 +7,11 @@ import * as path from 'path';
@@ -1508,7 +1533,7 @@ index c8f38b7acac37a781e1467a655e88834aa97b4ef..06cc4454899669805633df0ff0228b26
                  case 'insert':
                      return handleInsert(sandbox, filePath, input.insert_line, input.new_str);
                  default:
-@@ -110,35 +119,178 @@ function applyViewRange(fileContent, viewRange) {
+@@ -113,35 +122,178 @@ function applyViewRange(fileContent, viewRange) {
      if (start < 1 || start > nLines) {
          throw new Error(`Invalid \`view_range\`: [${start}, ${end}]. Its first element \`${start}\` should be within the range of lines of the file: [1, ${nLines}]`);
      }
@@ -1697,7 +1722,7 @@ index c8f38b7acac37a781e1467a655e88834aa97b4ef..06cc4454899669805633df0ff0228b26
      const replacementLine = originalContent.substring(0, matchIndex).split('\n').length - 1;
      const insertedLines = replacement.split('\n').length;
      const originalLines = oldStr.split('\n').length;
-@@ -147,7 +299,7 @@ function buildStrReplaceResult(originalContent, oldStr, newStr, filePath) {
+@@ -150,7 +302,7 @@ function buildStrReplaceResult(originalContent, oldStr, newStr, filePath) {
      const startLine = Math.max(0, replacementLine - SNIPPET_LINES);
      const endLine = Math.min(newLines.length, replacementLine + SNIPPET_LINES + lineDifference + 1);
      const snippet = newLines.slice(startLine, endLine).join('\n');
@@ -1706,7 +1731,7 @@ index c8f38b7acac37a781e1467a655e88834aa97b4ef..06cc4454899669805633df0ff0228b26
  }
  /**
   * Inserts text at a 0-indexed line in file content. Validates the insertion
-@@ -289,7 +441,7 @@ async function handleCreate(sandbox, filePath, fileText) {
+@@ -292,7 +444,7 @@ async function handleCreate(sandbox, filePath, fileText) {
      await sandbox.writeText(filePath, fileText);
      return `File created successfully at: ${filePath}`;
  }
@@ -1715,7 +1740,7 @@ index c8f38b7acac37a781e1467a655e88834aa97b4ef..06cc4454899669805633df0ff0228b26
      if (oldStr === undefined) {
          throw new Error('Parameter `old_str` is required for command: str_replace');
      }
-@@ -303,8 +455,12 @@ async function handleStrReplace(sandbox, filePath, oldStr, newStr) {
+@@ -306,8 +458,12 @@ async function handleStrReplace(sandbox, filePath, oldStr, newStr) {
      }
      const fileContent = await sandbox.readText(filePath);
      assertWithinSizeLimit(fileContent);

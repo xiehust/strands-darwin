@@ -394,6 +394,21 @@ async function unavailableAndExplicitTargets(base: string): Promise<void> {
         message.content.some((block) => block.type === 'toolResultBlock' && block.status === 'error'))) &&
       value.calls.get('codegraph:search') === 1);
     await subagents.shutdown();
+
+    // SDK 1.25 swaps by identity: a later tool from another source must survive,
+    // then the next refresh after its removal must restore the wrapped MCP tool.
+    const collision = new LocalSearch('codegraph_search');
+    value.agent.toolRegistry.addOrReplace([collision]);
+    await (codegraphClient as unknown as { _handleToolsChanged(): Promise<void> })._handleToolsChanged();
+    assert('refresh does not remove or overwrite another source occupying a former MCP name',
+      tool(value.agent, collision.name) === collision && tool(value.agent, foreign.name) === foreign);
+    value.agent.toolRegistry.remove(collision.name);
+    await (codegraphClient as unknown as { _handleToolsChanged(): Promise<void> })._handleToolsChanged();
+    const recovered = tool(value.agent, collision.name);
+    const recoveredResult = await runTool(value.agent, recovered, {});
+    assert('a skipped name is readmitted on the next refresh with preflight intact',
+      recovered !== collision && recovered !== refreshedSearch && recovered.constructor.name !== 'McpTool' &&
+      text(recoveredResult.result).includes('Use bash or fileEditor') && value.calls.get('codegraph:search') === 1);
   } finally {
     await closeFixture(value);
   }

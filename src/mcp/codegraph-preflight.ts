@@ -69,17 +69,19 @@ export class CodeGraphPreflight {
     const codegraphClients = clients.filter((client) => client.clientName === CODEGRAPH_CLIENT_NAME);
     if (codegraphClients.length === 0) return 0;
 
-    const replacements = agent.tools.flatMap((candidate) => {
-      const wrapped = this.wrap(candidate, codegraphClients);
-      return wrapped === candidate ? [] : [wrapped];
-    });
-    if (replacements.length > 0) agent.toolRegistry.addOrReplace(replacements);
-
-    // Agent.initialize() owns the SDK callback that removes old names and adds
-    // refreshed tools. Decorate that callback rather than replacing its lifecycle
-    // behavior, so a later tools/list_changed cannot restore raw semantic tools.
-    for (const client of codegraphClients) this.wrapRefreshCallback(client);
-    return replacements.length;
+    let replacements = 0;
+    for (const client of codegraphClients) {
+      const current = agent.tools.filter((candidate) =>
+        candidate instanceof CodeGraphPreflightTool ? candidate.owner === client : mcpOwner(candidate, [client]) === client);
+      const next = current.map((candidate) => this.wrap(candidate, [client]));
+      const changed = next.filter((candidate, index) => candidate !== current[index]).length;
+      // SDK 1.25 tracks registered object identities, not old names. Let its own
+      // callback register the initial wrappers too, so future swaps recognize them
+      // without removing another source's same-name replacement.
+      this.wrapRefreshCallback(client, changed > 0 ? next : undefined);
+      replacements += changed;
+    }
+    return replacements;
   }
 
   private wrap(candidate: Tool, clients: readonly McpClient[]): Tool {
@@ -87,17 +89,21 @@ export class CodeGraphPreflight {
     if (owner === undefined || !clients.includes(owner)) return candidate;
     const serverName = mcpServerToolName(owner, candidate);
     return serverName !== undefined && CODEGRAPH_TOOL_NAMES.has(serverName)
-      ? new CodeGraphPreflightTool(candidate, this)
+      ? new CodeGraphPreflightTool(candidate, this, owner)
       : candidate;
   }
 
-  private wrapRefreshCallback(client: McpClient): void {
+  private wrapRefreshCallback(client: McpClient, initialTools?: Tool[]): void {
     const internal = client as unknown as {
       _onToolsChanged?: (oldTools: string[], newTools: Tool[]) => void;
       onToolsChanged: ((oldTools: string[], newTools: Tool[]) => void) | undefined;
     };
     const previous = internal._onToolsChanged;
-    if (previous === undefined) return;
+    if (previous === undefined) {
+      if (initialTools !== undefined) throw new Error('CodeGraph preflight requires the initialized SDK refresh callback');
+      return;
+    }
+    if (initialTools !== undefined) previous(initialTools.map((tool) => tool.name), initialTools);
     internal.onToolsChanged = (oldTools, newTools) => {
       previous(oldTools, newTools.map((candidate) => this.wrap(candidate, [client])));
     };
@@ -136,6 +142,7 @@ class CodeGraphPreflightTool extends Tool {
   constructor(
     private readonly original: Tool,
     private readonly preflight: CodeGraphPreflight,
+    readonly owner: McpClient,
   ) {
     super();
     this.name = original.name;

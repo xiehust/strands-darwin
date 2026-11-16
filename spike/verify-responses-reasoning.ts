@@ -154,7 +154,7 @@ function reasoningBlocks(messages: readonly Message[]): ReasoningBlock[] {
 }
 
 function responsesInput(modelId: string, messages: Message[], stateful = false): unknown {
-  return formatResponsesRequest({ modelId } as never, messages, undefined, stateful).input;
+  return formatResponsesRequest({ modelId } as never, messages, undefined, stateful, {}).input;
 }
 
 function withoutReasoning(messages: readonly Message[], keep: (block: ReasoningBlock) => boolean = () => false): Message[] {
@@ -405,6 +405,37 @@ header('byte-identical without a tagged block (pre-patch golden shapes)');
     { type: 'function_call_output', call_id: 't1', output: 'x' },
     { role: 'assistant', content: 'a' },
   ]));
+}
+
+header('SDK 1.25: the explicit-cache formatter keeps the same reasoning provenance boundary');
+{
+  const messages = [...mixed, new Message({ role: 'user', content: [new TextBlock('next'), new TextBlock('transient')] })];
+  for (const stateful of [false, true]) {
+    const request = formatResponsesRequest(
+      { modelId: GPT, cacheConfig: {} }, messages, { dynamicTrailingBlocks: 1 }, stateful,
+      { capabilities: { promptCaching: 'cachePoints' } },
+    );
+    const reasoning = Array.isArray(request.input)
+      ? request.input.filter((item) => 'type' in item && item.type === 'reasoning') : [];
+    const expected = (responsesInput(GPT, messages, stateful) as Record<string, unknown>[])
+      .filter((item) => item['type'] === 'reasoning');
+    assert(`cache formatter, stateful=${stateful}: same-model replay matches the ordinary path exactly`,
+      isDeepStrictEqual(reasoning, expected));
+    assert(`cache formatter, stateful=${stateful}: upstream checkpoint placement survives the rebase`,
+      JSON.stringify(request.input).includes('prompt_cache_breakpoint'));
+  }
+}
+
+header('SDK 1.25: upstream Bedrock unsigned-reasoning filter replaces the duplicate local guard');
+{
+  assert('Claude drops unsigned Converse reasoning but keeps the answer',
+    converseMessages(CLAUDE, kimiConverseTurn) === converseMessages(CLAUDE, withoutReasoning(kimiConverseTurn)));
+  assert('unknown profile ids still cannot forward a Darwin Responses provenance tag',
+    converseMessages('opaque-profile', [...gptAgent.messages]) ===
+      converseMessages('opaque-profile', withoutReasoning(gptAgent.messages)));
+  assert('upstream also drops Claude signatures on Kimi while preserving unsigned Kimi reasoning',
+    !converseMessages(KIMI, mixed).includes('EqQBCkgIBxABGAIiQJ1claude-sig') &&
+      converseMessages(KIMI, mixed).includes('kimi converse thinks'));
 }
 
 header('persistence: what the session snapshot keeps replays identically; the trajectory keeps presence only');
