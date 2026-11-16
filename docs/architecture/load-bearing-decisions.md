@@ -69,6 +69,43 @@ no longer needs `ignoredOptionalDependencies` for `@tobilu/qmd`. Checks:
 `verify-context-offload.ts`, `verify-web-fetch.ts`, `verify-npm-patch-format.ts`, and the
 standalone registry install suite `verify-npm-package.ts`.
 
+## OpenAI gateway authentication — bounded user-configured helper
+
+**Direct OpenAI `baseUrl` and optional `headersCommand` use the SDK's ordinary client
+configuration, never a new provider or agent loop.** `src/config.ts` validates both flat
+and array forms; helper auth requires an explicit HTTPS destination (loopback HTTP for
+local tests), without URL credentials/query/fragment, and refuses static-key/AWS endpoint
+conflicts. The user logs in externally; no browser/OAuth/store is added to Darwin.
+
+`src/model-headers-command.ts` executes an absolute program plus literal args from its
+own directory, with the user environment + DARWIN, no shell or stdin. stdout is bounded
+at 16 KiB, values at 8192 ASCII characters, and only one bearer Authorization plus an
+optional x-api-key is accepted. stderr/spawn errors never become context. Timeout,
+overflow and last-waiter cancellation kill the POSIX process group (Windows: direct child).
+No result is cached before successful exit and parsing. A weak config-object cache shares
+credentials, not Models, through the factory's existing shallow config copies; expiry is
+lazy/monotonic, concurrent callers single-flight, sibling cancellation independent. Helper
+failures latch until new validated configuration/restart; cancellation does not latch, and
+expired headers are never reused on failure. No auth retry/replay is installed.
+
+A client-local `fetch` injects both headers atomically after checking destination origin/path
+prefix and signal, replacing the inert SDK constructor key before any egress. Ambient keys
+are never fallback credentials. All redirects are refused, client logs disabled, and bounded
+HTTP error bodies/headers have the active auth values redacted before SDK error conversion;
+status and error codes remain available to the existing retry/context-overflow classifier.
+A public Model.stream forwarding boundary tracks per-stream credentials in async-local scope
+and redacts thrown SSE errors/cause details while preserving SDK error prototypes, status and
+code (including escaped strings/detail keys); cleanup failures use the same boundary and
+credential scopes are always cleared. The existing SDK log router redacts active-scoped messages
+before console, renderer or verbose publication, preserving literal no-op off handlers.
+Successful events and answer text remain unchanged. It unwraps only the fixed safe helper
+failure so SDK connection-error wrapping cannot hide the required sign-in/restart guidance.
+Credentials never join Model config, prompts, session snapshots or environment variables.
+This does not promise filtering arbitrary successful gateway content or transformed secrets.
+Free coverage: `spike/verify-model-headers-command.ts` (real processes + loopback Chat/Responses
+SSE, config bounds, cache/refresh/failure, cleanup/cancellation, scope/redirect and echo errors),
+plus `verify-config.ts`; both are in `pnpm test`.
+
 ## SDK HTTP request — parent-only ordinary gated tool
 
 **HTTP access is an ordinary parent tool, not a side channel.** The parent runtime directly adds

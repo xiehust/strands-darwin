@@ -55,7 +55,8 @@
 | `model` | `global.anthropic.claude-opus-5` | 供应商对应的模型 ID |
 | `region` | AWS 环境变量，其次 `us-west-2` | Bedrock/Mantle 区域 |
 | `apiKeyEnv` | 供应商惯例 | 保存直连 API key 的环境变量名 |
-| `baseUrl` | `ANTHROPIC_BASE_URL`，其次 `https://api.anthropic.com` | 仅 Anthropic；Messages API 兼容端点的 `http(s)` URL |
+| `baseUrl` | provider 的 base-URL 环境变量，其次客户端默认地址 | 直连 Anthropic 或 OpenAI 的 `http(s)` 端点；不可与 `bedrockMantle`、`bedrockRuntime` 同时使用 |
+| `headersCommand` | — | 仅 OpenAI；有界认证头 helper，必须明确配置安全的 `baseUrl`；见[网关认证](getting-started.zh-CN.md#通过登录-helper-接入-openai-网关) |
 | `bedrockMantle` | `false` | OpenAI provider 通过 AWS Mantle 端点调用（`openai.*` 目录 ID）；不可与 `apiKeyEnv`、`bedrockRuntime` 同时使用 |
 | `bedrockRuntime` | `false` | OpenAI provider 通过 Bedrock runtime 端点的 `/openai/v1` 接口调用（`us.openai.*` / `global.openai.*` 推理配置）；不可与 `apiKeyEnv`、`bedrockMantle` 同时使用 |
 | `openaiApi` | `chat` | `chat` 或 `responses` |

@@ -55,7 +55,8 @@ A flat file intentionally exposes only one model to `/model`. `/model` persists 
 | `model` | `global.anthropic.claude-opus-5` | provider-specific ID |
 | `region` | AWS env, then `us-west-2` | Bedrock/Mantle region |
 | `apiKeyEnv` | provider convention | environment variable containing direct API key |
-| `baseUrl` | `ANTHROPIC_BASE_URL`, then `https://api.anthropic.com` | Anthropic only; `http(s)` URL of a Messages API-compatible endpoint |
+| `baseUrl` | provider base-URL env, then client default | direct Anthropic or OpenAI `http(s)` endpoint; cannot join `bedrockMantle`/`bedrockRuntime` |
+| `headersCommand` | — | OpenAI only; bounded auth-header helper, requires explicit secure `baseUrl`; see [gateway authentication](getting-started.md#openai-gateways-with-a-login-helper) |
 | `bedrockMantle` | `false` | OpenAI provider via AWS's Mantle endpoint (`openai.*` catalogue ids); mutually exclusive with `apiKeyEnv` and `bedrockRuntime` |
 | `bedrockRuntime` | `false` | OpenAI provider via the Bedrock runtime endpoint's `/openai/v1` surface (`us.openai.*` / `global.openai.*` inference profiles); mutually exclusive with `apiKeyEnv` and `bedrockMantle` |
 | `openaiApi` | `chat` | `chat` or `responses` |

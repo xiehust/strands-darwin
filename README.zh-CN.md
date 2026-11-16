@@ -104,7 +104,7 @@ pnpm build                  # 输出 dist/（CLI、内置 skill 和生成的 pat
 }
 ```
 
-Bedrock 使用标准 AWS 凭证链。模型 ID 必须是 `us.`、`eu.`、`apac.` 或 `global.` 等推理配置文件 ID，不能直接填写 `anthropic.*`。直连供应商默认读取 `ANTHROPIC_API_KEY` 或 `OPENAI_API_KEY`；直连 Anthropic 还支持通过 `baseUrl`（或 `ANTHROPIC_BASE_URL`）接入任何兼容 Messages API 的端点。
+Bedrock 使用标准 AWS 凭证链。模型 ID 必须是 `us.`、`eu.`、`apac.` 或 `global.` 等推理配置文件 ID，不能直接填写 `anthropic.*`。直连供应商默认读取 `ANTHROPIC_API_KEY` 或 `OPENAI_API_KEY`；直连 Anthropic 和 OpenAI 还支持 `baseUrl`（或对应供应商的 base-URL 环境变量）。需要动态 bearer 和身份认证头的 OpenAI 网关可通过有界的 [`headersCommand` 登录 helper](docs/user-guide/getting-started.zh-CN.md#通过登录-helper-接入-openai-网关) 接入。
 
 多模型切换、各供应商字段、Bedrock Mantle、缓存、思考强度、上下文限制和全部会话设置，见[入门与模型供应商](docs/user-guide/getting-started.zh-CN.md)和[配置与上下文](docs/user-guide/configuration.zh-CN.md)。
 

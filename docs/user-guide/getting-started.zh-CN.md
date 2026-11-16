@@ -132,7 +132,7 @@ aws bedrock list-inference-profiles --region us-west-2 \
 
 Anthropic 支持已经安装。`apiKeyEnv` 可指定密钥所在的环境变量；未指定时使用 `ANTHROPIC_API_KEY`；两者都没有时 darwin 拒绝启动并同时点名这两个选项。
 
-任何兼容 Anthropic Messages API 的端点（网关、代理、中继）都可通过 `baseUrl` 接入，值必须是 `http:` 或 `https:` URL。未设置时依次回落到 `ANTHROPIC_BASE_URL` 和客户端默认的 `https://api.anthropic.com`。其他 provider 设置 `baseUrl` 会被拒绝。
+任何兼容 Anthropic Messages API 的端点（网关、代理、中继）都可通过 `baseUrl` 接入，值必须是 `http:` 或 `https:` URL。未设置时依次回落到 `ANTHROPIC_BASE_URL` 和客户端默认的 `https://api.anthropic.com`。直连 OpenAI 也支持 `baseUrl`；Bedrock 以及 OpenAI 的 AWS 端点开关不可与它同时使用。
 
 ```json
 {
@@ -154,6 +154,64 @@ pnpm tsx spike/probe-mantle-catalog.ts us-east-1 us-west-2
 ```
 
 当 `provider: "openai"` 且 `bedrockRuntime: true` 时，darwin 改走普通 Bedrock runtime 端点的 OpenAI 兼容接口（`https://bedrock-runtime.<region>.amazonaws.com/openai/v1`），同样使用 AWS 凭证。模型名填跨区域推理配置（`global.openai.gpt-6-astra`、`us.openai.gpt-6-astra`）；内置的 `gpt-6-astra` 预置走的就是这条路，价格低于 Mantle 的区域内价。`bedrockRuntime`、`bedrockMantle` 与 `apiKeyEnv` 三者互斥。
+
+## 通过登录 helper 接入 OpenAI 网关
+
+直连 OpenAI 支持 `baseUrl`；未设置时依次使用 `OPENAI_BASE_URL` 和客户端默认地址。
+需要动态 bearer token 和身份认证头的网关可以复用 llmar 等已安装的 helper。
+先在 Darwin 外完成 `llmar login`；SSH 环境支持 `llmar login --no-browser`。
+Darwin 不打开登录浏览器、不注册 OAuth 客户端，也不保存另一份 refresh token。
+
+```json
+{
+  "provider": "openai",
+  "name": "llmar",
+  "model": "auto",
+  "openaiApi": "responses",
+  "baseUrl": "https://your-gateway.example.com/inference/v1",
+  "headersCommand": {
+    "command": "/home/ubuntu/bin/llmar",
+    "args": ["headers"],
+    "timeoutMs": 15000,
+    "refreshIntervalMs": 240000
+  },
+  "contextWindowLimit": 1000000,
+  "contextWarnRatio": 0.7
+}
+```
+
+把 URL 和程序路径替换成你的配置。地址填到 `/v1`，不要追加 `/responses`，SDK 会追加资源路径。
+多模型数组中，模型字段放进对应条目，`contextWarnRatio` 保留在根级。
+上下文窗口是客户端声明，不代表网关保证；`0.7` 只提醒使用 `/compact`，**不会主动压缩**。
+Darwin 会发送 `reasoning.effort`（默认 `high`），`auto` 必须支持它以及配置的输出预算。
+使用 `auto` 权限模式时，还应配置网关支持的 `classifierModel`；OpenAI 默认分类模型为
+`gpt-4o-mini`，不会自动采用主模型的 `auto` 名称。
+
+helper 的约定如下：
+
+- `command` 必须是绝对程序路径，最多 4096 字符，不经过 shell、不展开变量；
+  `args` 默认为 `[]`，最多 32 个字符串，每个最多 4096 字符。
+- `timeoutMs` 默认 `15000`，整数范围 `1–60000`；`refreshIntervalMs` 默认 `240000`，
+  整数范围 `1–3600000`。仅在请求时检查缓存并刷新，没有后台定时器。
+- stdout 必须包含 `Authorization: Bearer <token>`，可以再包含 `x-api-key: <token>`，
+  每个头一行，名称不区分大小写，支持 LF/CRLF；拒绝其他头和重复名称。
+  总输出最多 16 KiB，每个值最多 8192 字符，stderr 不会显示。
+  此客户端关闭 SDK 日志；HTTP 错误响应最多 64 KiB，在 SDK 处理前去除当前凭据值。
+  抛出的 SSE 错误也会脱敏；helper 失败时保留登录和重启提示，不被 SDK 的连接错误包装遮住。
+  成功响应内容和流事件保持原样。
+- helper 继承用户环境并带有 `DARWIN` 标记，stdin 关闭，工作目录为程序所在目录，而非项目目录。
+  POSIX 上超时或取消会终止进程组；Windows 只终止直接子进程。
+- 认证头只存在内存中，不进入模型配置或历史。同一已验证配置创建的模型共享一次正在进行的刷新和成功缓存；
+  取消一个请求不影响其他等待者，最后一个等待者取消时会终止 helper。
+- helper 失败后停止对该配置再次执行；完成登录或修复后重启 Darwin。刷新失败不使用过期凭据兜底。
+  HTTP 401 不会触发刷新或重放，也没有 helper 自己的重试循环。
+- 必须明确指定 HTTPS `baseUrl`（本地测试允许回环 HTTP），不能带 URL 用户信息、查询参数或 fragment。
+  认证请求不能离开该地址的 origin 和路径前缀，禁止重定向。
+  `headersCommand` 与 `apiKeyEnv`、`bedrockMantle`、`bedrockRuntime` 互斥；
+  环境中的 `OPENAI_API_KEY` 不会成为认证失败时的替代密钥。
+
+当前 `llmar headers` 把同一 access token 放入两个认证头，需要确认部署接受此约定；
+它不等价于另外维护 Codex 的 `gateway_oauth` 登录。不要把 helper 输出或 refresh token 粘贴进提示词。
 
 ## 最小配置示例
 

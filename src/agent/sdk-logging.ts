@@ -17,6 +17,7 @@
  * opt-in verbose tap below exist without a second owner of the global logger.
  */
 import { configureLogging } from '@strands-agents/sdk';
+import { headersCommandStreamActive, redactHeadersCommandText } from '../model-headers-command.js';
 
 /** What the SDK logged, flattened to one line. */
 export interface SdkLogEntry {
@@ -124,8 +125,9 @@ function emit(
   tap: SdkVerboseSink | undefined,
 ): void {
   if (sink === undefined && tap === undefined) {
-    if (level === 'warn') console.warn(...args);
-    else console.error(...args);
+    const safeArgs = headersCommandStreamActive() ? [flatten(args)] : args;
+    if (level === 'warn') console.warn(...safeArgs);
+    else console.error(...safeArgs);
     return;
   }
   const message = flatten(args);
@@ -135,9 +137,8 @@ function emit(
 
 /** The SDK logs printf-style varargs; the renderer wants one string. */
 function flatten(args: readonly unknown[]): string {
-  return args
+  const text = args
     .map((arg) => (typeof arg === 'string' ? arg : arg instanceof Error ? arg.message : JSON.stringify(arg)))
-    .join(' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+    .join(' ');
+  return redactHeadersCommandText(text).replace(/\s+/g, ' ').trim();
 }

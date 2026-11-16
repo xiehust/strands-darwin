@@ -41,6 +41,7 @@ import { passthroughEntryProblem } from './tools/shell-env.js';
 import { parseAgentCoreConfig, type AgentCoreConfig } from './agentcore/config.js';
 import { readConfigBytes, updateConfigFile } from './config-file.js';
 import { effectiveCloudPolicy, parseProjectOverrides, type ProjectOverrides } from './project-overrides.js';
+import { createHeadersCommandClient, protectHeadersCommandModel, parseHeadersCommand, headersCommandBaseUrlProblem, type HeadersCommandConfig } from './model-headers-command.js';
 
 /** Raised for malformed or unusable configuration. Always carries a fix hint. */
 export class ConfigError extends Error {
@@ -112,12 +113,13 @@ export interface ModelFields {
   /** Env var holding the API key, for providers that need one. */
   apiKeyEnv?: string;
   /**
-   * `anthropic` provider only: base URL of an Anthropic Messages API-compatible
-   * endpoint (a gateway, proxy or relay in front of `api.anthropic.com`). Falls
-   * back to `ANTHROPIC_BASE_URL`, then the client's own default — see
-   * {@link resolveAnthropicBaseUrl}. Must be an `http:` or `https:` URL.
+   * Direct Anthropic or OpenAI compatible endpoint. Falls back to the provider's
+   * base-URL environment variable, then its client default. Must be an http(s) URL;
+   * mutually exclusive with OpenAI's AWS endpoint switches.
    */
   baseUrl?: string;
+  /** OpenAI only: bounded user-configured auth-header helper; requires explicit baseUrl. */
+  headersCommand?: HeadersCommandConfig;
   /**
    * `openai` provider only: route requests through Amazon Bedrock's
    * OpenAI-compatible "Mantle" endpoint instead of `api.openai.com`, reaching
@@ -421,6 +423,7 @@ export const MODEL_KEYS = [
   'region',
   'apiKeyEnv',
   'baseUrl',
+  'headersCommand',
   'bedrockMantle',
   'bedrockRuntime',
   'openaiApi',
@@ -1144,15 +1147,11 @@ function validateModelFields(input: Record<string, unknown>, where: string): Mod
   const apiKeyEnv = stringField(input, 'apiKeyEnv', where);
   if (apiKeyEnv !== undefined) fields.apiKeyEnv = apiKeyEnv;
 
-  // Anthropic-only, and checked as a URL here: the client would accept any string
-  // and fail on the first request with a fetch error that names neither the file
-  // nor the key.
+  // Direct-provider endpoint, validated before constructing the client.
   const baseUrl = stringField(input, 'baseUrl', where);
   if (baseUrl !== undefined) {
-    if (provider !== 'anthropic') {
-      throw new ConfigError(
-        `${where}: "baseUrl" only applies to provider "anthropic" (this one sets ${JSON.stringify(provider)}).`,
-      );
+    if (provider !== 'anthropic' && provider !== 'openai') {
+      throw new ConfigError(`${where}: "baseUrl" only applies to provider "anthropic" or "openai".`);
     }
     if (!isHttpUrl(baseUrl)) {
       throw new ConfigError(
@@ -1160,6 +1159,22 @@ function validateModelFields(input: Record<string, unknown>, where: string): Mod
       );
     }
     fields.baseUrl = baseUrl;
+  }
+
+  if (input['headersCommand'] !== undefined) {
+    if (provider !== 'openai' || baseUrl === undefined) {
+      throw new ConfigError(`${where}: "headersCommand" requires provider "openai" and an explicit "baseUrl".`);
+    }
+    const problem = headersCommandBaseUrlProblem(baseUrl);
+    if (problem !== undefined) throw new ConfigError(`${where}: "headersCommand" baseUrl ${problem}.`);
+    if (apiKeyEnv !== undefined || input['bedrockMantle'] === true || input['bedrockRuntime'] === true) {
+      throw new ConfigError(`${where}: "headersCommand" is mutually exclusive with "apiKeyEnv", "bedrockMantle" and "bedrockRuntime".`);
+    }
+    try { fields.headersCommand = parseHeadersCommand(input['headersCommand']); }
+    catch (error) { throw new ConfigError(`${where}: ${error instanceof Error ? error.message : 'invalid headersCommand'}`); }
+  }
+  if (baseUrl !== undefined && (input['bedrockMantle'] === true || input['bedrockRuntime'] === true)) {
+    throw new ConfigError(`${where}: "baseUrl" is mutually exclusive with "bedrockMantle" and "bedrockRuntime".`);
   }
 
   // Rejected here rather than left to the SDK, which throws the same conflict as
@@ -2167,7 +2182,9 @@ async function createOpenAIModel(config: AppConfig, call: ModelCallOptions): Pro
       ? { bedrockMantleConfig: { region: resolveRegion(config.region) } }
       : config.bedrockRuntime === true
         ? await bedrockRuntimeClient(resolveRegion(config.region))
-        : optionalApiKey(readApiKey(config));
+        : config.headersCommand !== undefined
+          ? createHeadersCommandClient(config.headersCommand, config.baseUrl!, call.cancelSignal)
+          : { ...optionalApiKey(readApiKey(config)), ...(config.baseUrl === undefined ? {} : { clientConfig: { baseURL: config.baseUrl } }) };
 
   // The user's window beats darwin's Mantle table, which beats the SDK's own.
   const contextWindowLimit = config.contextWindowLimit ?? openAIContextWindowLimit(config.model);
@@ -2183,7 +2200,8 @@ async function createOpenAIModel(config: AppConfig, call: ModelCallOptions): Pro
   // Branched on the literal rather than passing `api` through: `OpenAIModelOptions`
   // is discriminated on it, and a union-typed `api` would widen the options to the
   // point where a chat-only field on a responses config no longer fails to compile.
-  return api === 'responses' ? new OpenAIModel({ api: 'responses', ...options }) : new OpenAIModel({ api: 'chat', ...options });
+  const model = api === 'responses' ? new OpenAIModel({ api: 'responses', ...options }) : new OpenAIModel({ api: 'chat', ...options });
+  return config.headersCommand === undefined ? model : protectHeadersCommandModel(model);
 }
 
 /** Which OpenAI API this config speaks. Chat Completions unless asked otherwise. */

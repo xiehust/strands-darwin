@@ -266,14 +266,11 @@ async function providerSwitching(): Promise<void> {
       async () => loadConfig(await writeConfig('{ "provider": "anthropic", "model": "claude-sonnet-4-6", "baseUrl": "gateway.example.test" }')),
     );
     assert('the refusal names baseUrl and the value', badUrl.includes('"baseUrl"') && badUrl.includes('gateway.example.test'));
-    for (const provider of ['bedrock', 'openai']) {
-      const model = provider === 'bedrock' ? 'global.anthropic.claude-sonnet-4-6' : 'gpt-5';
-      const wrongProvider = await expectConfigError(
-        `baseUrl on provider ${provider} is refused`,
-        async () => loadConfig(await writeConfig(`{ "provider": "${provider}", "model": "${model}", "baseUrl": "https://x.example.test" }`)),
-      );
-      assert(`the ${provider} refusal names the anthropic-only rule`, wrongProvider.includes('only applies to provider "anthropic"'));
-    }
+    const wrongProvider = await expectConfigError(
+      'baseUrl on provider bedrock is refused',
+      async () => loadConfig(await writeConfig('{ "provider": "bedrock", "model": "global.anthropic.claude-sonnet-4-6", "baseUrl": "https://x.example.test" }')),
+    );
+    assert('the bedrock refusal names the direct-provider rule', wrongProvider.includes('only applies to provider "anthropic" or "openai"'));
   } finally {
     if (savedAnthropicKey === undefined) delete process.env['ANTHROPIC_API_KEY'];
     else process.env['ANTHROPIC_API_KEY'] = savedAnthropicKey;
@@ -1687,9 +1684,9 @@ async function documentedKeys(): Promise<void> {
     systemPrompt: 'You are terse.',
     maxInstructionsBytes: 131072,
   };
-  const flatKeys = [...MODEL_KEYS, ...SESSION_KEYS].filter((key) => key !== 'openaiApi' && key !== 'baseUrl');
+  const flatKeys = [...MODEL_KEYS, ...SESSION_KEYS].filter((key) => key !== 'openaiApi' && key !== 'baseUrl' && key !== 'headersCommand');
   assert(
-    'the flat fixture carries every schema key but openaiApi and baseUrl',
+    'the flat fixture carries every schema key but openaiApi, baseUrl and headersCommand',
     JSON.stringify([...Object.keys(flatFixture)].sort()) === JSON.stringify([...flatKeys].sort()),
   );
   const flat = await loadConfig(await writeConfig(JSON.stringify(flatFixture)));

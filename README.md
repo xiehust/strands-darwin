@@ -104,7 +104,7 @@ The only active model/provider configuration is `~/.darwin/config.json`. With no
 }
 ```
 
-Bedrock uses the standard AWS credential chain and requires an inference-profile model ID such as `us.`, `eu.`, `apac.`, or `global.`, not a bare `anthropic.*` ID. Direct providers use `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`; direct Anthropic also honours `baseUrl` (or `ANTHROPIC_BASE_URL`) for any Messages API-compatible endpoint.
+Bedrock uses the standard AWS credential chain and requires an inference-profile model ID such as `us.`, `eu.`, `apac.`, or `global.`, not a bare `anthropic.*` ID. Direct providers use `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`; direct Anthropic and OpenAI also honour `baseUrl` (or their provider's base-URL environment variable). OpenAI gateways with rotating bearer/identity headers can use a bounded [`headersCommand` login helper](docs/user-guide/getting-started.md#openai-gateways-with-a-login-helper).
 
 For multiple switchable models, provider-specific fields, Bedrock Mantle, caching, thinking effort, context limits, and all session settings, read [Getting started and providers](docs/user-guide/getting-started.md) and [Configuration and context](docs/user-guide/configuration.md).
 

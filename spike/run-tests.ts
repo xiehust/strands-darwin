@@ -52,6 +52,7 @@ const suites = [
   'verify-shell-command.ts',
   'verify-stream-into-static.ts',
   'verify-config.ts',
+  'verify-model-headers-command.ts',
   'verify-update-check.ts',
   'verify-terminal-bell.ts',
   'verify-terminal-notify.ts',

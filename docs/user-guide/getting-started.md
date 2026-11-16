@@ -132,7 +132,7 @@ Region resolution is `region` → `AWS_REGION` → `AWS_DEFAULT_REGION` → `us-
 
 Anthropic support is installed. Set `apiKeyEnv` to your key's environment-variable name or use `ANTHROPIC_API_KEY`; with neither, darwin refuses to start and names both.
 
-Any Anthropic Messages API-compatible endpoint (gateway, proxy, relay) is reached through `baseUrl`, which must be an `http:` or `https:` URL. Without it darwin uses `ANTHROPIC_BASE_URL`, then the client's default `https://api.anthropic.com`. `baseUrl` is refused on other providers.
+Any Anthropic Messages API-compatible endpoint (gateway, proxy, relay) is reached through `baseUrl`, which must be an `http:` or `https:` URL. Without it darwin uses `ANTHROPIC_BASE_URL`, then the client's default `https://api.anthropic.com`. `baseUrl` is also supported by direct OpenAI, but refused on Bedrock and the OpenAI AWS endpoint switches.
 
 ```json
 {
@@ -154,6 +154,71 @@ pnpm tsx spike/probe-mantle-catalog.ts us-east-1 us-west-2
 ```
 
 With `provider: "openai"` and `bedrockRuntime: true`, darwin instead talks to the ordinary Bedrock runtime endpoint's OpenAI-compatible surface (`https://bedrock-runtime.<region>.amazonaws.com/openai/v1`) with the same AWS credentials. Name a cross-region inference profile as the model (`global.openai.gpt-6-astra`, `us.openai.gpt-6-astra`); the built-in `gpt-6-astra` preset uses this route, which is priced below Mantle's in-region rate. `bedrockRuntime`, `bedrockMantle` and `apiKeyEnv` are mutually exclusive.
+
+## OpenAI gateways with a login helper
+
+Direct OpenAI accepts `baseUrl` (otherwise `OPENAI_BASE_URL`, then the client default).
+For gateways needing a rotating bearer token and an identity header, use a user-installed
+helper such as llmar. Sign in outside Darwin first (`llmar login`; SSH supports
+`llmar login --no-browser`). Darwin does not open a browser, register OAuth clients,
+or maintain a second refresh-token store.
+
+```json
+{
+  "provider": "openai",
+  "name": "llmar",
+  "model": "auto",
+  "openaiApi": "responses",
+  "baseUrl": "https://your-gateway.example.com/inference/v1",
+  "headersCommand": {
+    "command": "/home/ubuntu/bin/llmar",
+    "args": ["headers"],
+    "timeoutMs": 15000,
+    "refreshIntervalMs": 240000
+  },
+  "contextWindowLimit": 1000000,
+  "contextWarnRatio": 0.7
+}
+```
+
+Replace the URL and executable path with yours. Configure the base through `/v1`, not
+`/responses`; the SDK appends the resource path. In a `models` array, put model fields
+in the entry and keep `contextWarnRatio` at the root. The window is a client declaration,
+not a gateway guarantee; `0.7` recommends `/compact`, **not automatic compaction**.
+Darwin sends `reasoning.effort` (default `high`); `auto` must accept it and the configured
+output budget. In `auto` permission mode, also choose a gateway-supported `classifierModel`;
+OpenAI's default classifier is `gpt-4o-mini`, not the main model's `auto` id.
+
+The helper contract is deliberately narrow:
+
+- `command` is an absolute executable path (at most 4096 characters); no shell or
+  expansion. `args` defaults to `[]`, at most 32 strings of at most 4096 characters.
+- `timeoutMs` defaults to `15000`, integer `1–60000`; `refreshIntervalMs` defaults to
+  `240000`, integer `1–3600000`. Refresh is lazy, not a background timer.
+- stdout must contain `Authorization: Bearer <token>` and optionally `x-api-key: <token>`,
+  one line each, case-insensitive names, LF or CRLF. No other headers or duplicate names.
+  Total output is capped at 16 KiB, each value at 8192 characters. Stderr is discarded.
+  Client logs are disabled; HTTP error responses are capped at 64 KiB and have active
+  credential values redacted before SDK error handling. Thrown SSE errors are also redacted,
+  and helper failures retain their sign-in/restart explanation through SDK wrapping;
+  successful content and stream events are unchanged.
+- The helper inherits the user's environment with the `DARWIN` marker, has stdin closed,
+  and runs from the executable's directory, not the project. On POSIX a timed-out or
+  cancelled helper's process group is killed; Windows kills the direct child only.
+- Headers stay in memory, outside model configuration/history. Models built from the same
+  validated configuration share a single in-flight refresh and success cache. Cancelling
+  one waiter does not cancel siblings; the last waiter cancelling kills the helper.
+- A helper failure blocks further attempts for that configuration: sign in or repair the
+  helper and restart Darwin. Expired credentials are never used as a fallback. HTTP 401
+  does not trigger a refresh/replay; there is no helper-owned retry loop.
+- An explicit HTTPS `baseUrl` is required (loopback HTTP allowed for local tests), without
+  URL credentials, query or fragment. Authenticated requests cannot leave its origin/path
+  prefix, and redirects are forbidden. `apiKeyEnv`, `bedrockMantle`, and `bedrockRuntime`
+  cannot join `headersCommand`; ambient `OPENAI_API_KEY` is not a fallback.
+
+`llmar headers` currently puts the same access token into both headers. Check that your
+particular gateway accepts that contract; it is not equivalent to maintaining an independent
+Codex `gateway_oauth` session. Never paste helper output or refresh tokens into a prompt.
 
 ## Minimal examples
 
