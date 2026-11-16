@@ -278,7 +278,7 @@ Read the origin report's S1–S6/R1–R4 evidence and the applicable AGENTS load
 
 ## SER-132 — User-only /reply opens the last completed answer as quoted editor context and returns edits unsent
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 172
 - Score: 11
 - Importance: 3
@@ -290,7 +290,11 @@ Read the origin report's S1–S6/R1–R4 evidence and the applicable AGENTS load
 
 ### Implementation / acceptance evidence
 
-Not implemented. Independent acceptance pending.
+Accepted `c650317be06326c7d8ef98af85f8ecb5c3f89948` (`feat(tui): compose quoted replies without sending`) from fresh developer child `session-20261116-094329185`, task `bg-6e8c2349-a1f7-413f-8d5f-593db49a99fb` (exit 0, fully drained). Host reviewed the explicit base `74bca1d594a1a4ddc631609eacb765e13b22b043` to result diff: this was the only intervening commit, no foreign writer. Shared editor seed/owner path, completed-answer projection, human-only route and local driver refusals preserve the intended boundaries.
+
+Independent Host task `bg-ed3ad1c7-7768-42f1-b332-498686e3a0bc` (2026-11-16 10:23:47–10:50:20 UTC, exit 0) passed `pnpm typecheck`, full `pnpm test` (182 registered suites, including exact quoting/unsent/privacy/failure/cap/ownership/resume/driver/peer tests and inherited editor checks), `pnpm tsx spike/verify-tui.ts completion` (84 passed, 0 failed), `pnpm build`, `node dist/src/cli.js --version` (0.0.54), diff check and clean tree. Both READMEs, English/zh-CN narrative/reference and existing editor architecture are synchronized in the accepted commit; AGENTS unchanged at 32,638 bytes. No source repair by Host or acceptance correction. The worker's initial full gate failed a PTY fixture interaction and was completed with corrected/remaining suites; the Host gate above was fresh and uninterrupted.
+
+Supervision receipt: [2026-11-16 — SER-132 quoted reply supervision](../../iteration-log.md#2026-11-16--ser-132-quoted-reply-supervision). Score remains 11; batch exhausted after acceptance.
 
 ### Notes / blockers / abandonment reason
 

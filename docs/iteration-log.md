@@ -4048,3 +4048,44 @@ cost: total=18.2706 input=0.0010 output=1.5085 cacheRead=12.7338 cacheWrite=4.02
 Computed exclusive-bucket total: **17,262,104 tokens**. Approximate USD components aggregate to input **0.0016**, output **2.4621**, cacheRead **16.6934**, cacheWrite **6.4904**, reconciling to reported **25.6475**. Individual rounded component residuals are +0.0001 and −0.0001 USD, aggregate zero. No missing or unknown receipt bucket. These receipts cover the two worker processes only, not Host inference or separate live verification calls. Both workers emitted an existing AgentCore in-flight/interrupted-state diagnostic at exit; this upgrade did not inspect or repair cloud-memory state and makes no cloud-health claim.
 
 **Halt: batch exhausted.** SER-131 is `done`; no direction was abandoned, and no unfinished routed record remains. The two below-gate ideas (file-tool replacement 3, server compaction 0) were report-only rejections. Commit closure records, push the current branch once normally, and verify `git log @{u}..` is empty before reporting. The push also includes previously pending ancestor commits on main; those are not attributed to this worker. No force push, release, tag or package publication.
+
+
+## 2026-11-16 — SER-132 quoted reply supervision
+
+Rolled `peer` batch from [research_2026-11-16.md](research/research_2026-11-16.md), run `09:11:33Z`; SER-132 score 11, priority 172, sole accepted direction. Source comparison covered Claude Code, Codex, DeepSeek Harness, OpenCode, kiro-cli, PenguinHarness and Gemini CLI. Kiro's documented quoted reply establishes the concrete composition gap; Darwin deliberately returns edited output unsent rather than auto-submitting.
+
+Starting revision `d1ec027e580bb2d16f6782461ab5aa1026af8835` was clean and passed Host `pnpm typecheck && pnpm test` in `bg-914739c1-997e-4b24-a40a-1313ac6e5195` (exit 0). `74bca1d594a1a4ddc631609eacb765e13b22b043` only marks SER-132 in-progress; clean source-launch avoided stale dist. Fresh developer child **`session-20261116-094329185`**, managed **`bg-6e8c2349-a1f7-413f-8d5f-593db49a99fb`**, used `pnpm tsx src/cli.ts --yolo --context-offload -p`, no model-call ceiling. Exit 0; incremental/terminal output drained through `hasMore: false`. No transient retry, focused acceptance correction, child reuse or Host implementation edit.
+
+| Milestone | Accepted commit | Independent Host acceptance |
+|---|---|---|
+| Human-only /reply reuses completed-answer projection and existing editor handoff; edits remain unsent, with bounded local refusals and preserved composer/image/stash ownership | `c650317be06326c7d8ef98af85f8ecb5c3f89948` | Explicit base/result history/diff review (only child commit, no foreign writer). Fresh Host gate `bg-ed3ad1c7-7768-42f1-b332-498686e3a0bc`, 10:23:47–10:50:20 UTC, exit 0: typecheck, full fast suite, completion, build, CLI smoke, clean diff/status. |
+
+### Independent acceptance details
+
+Host reran exactly `pnpm typecheck && pnpm test && pnpm tsx spike/verify-tui.ts completion && pnpm build && node dist/src/cli.js --version && git diff --check && git diff --exit-code && git status --short`. All **182 registered fast suites** passed in one uninterrupted run; completion **84 passed, 0 failed**; built CLI `darwin 0.0.54`; tree clean. Registration count was computed from `spike/run-tests.ts`, not inferred from a worker number.
+
+Changed-suite evidence includes `verify-reply-command.ts` (completed/partial/empty Unicode projection, quote-expansion caps, canonical reservation and all 33 built-ins in help/completion), `verify-reply-command-pty.ts` (exact seed/edit bytes, literal comments/quotes, no model or durable userInput until Enter, resumed transcript, cursor/image/stash preservation, busy/queue/modal/permission/session ownership, failure/cap/config guidance and real headless/REPL refusals), `verify-external-editor.ts` (private real-file quoted round trip and untouched CRLF/control seed equality), and authenticated peer refusal with editor sentinel in `verify-collaboration-drivers.ts`. Existing `verify-external-editor-pty.ts` remains the no-second-handoff/key-alias/cleanup evidence. Complete fast gate also runs frame/queue/driver/session/permission regressions. No live provider quality assertion or peer-product execution.
+
+Reviewed all 22 changed files: nine source files, six test/fixture/runner files, and seven docs. No SDK/runtime/gate/dependency change. The worker's original `pnpm test` did **not** pass uninterrupted: strengthened cursor fixture reopened completion and never launched the editor. It fixed the fixture and resumed remaining inventory, then separately verified raw-equality-before-normalization preserving an untouched quote seed. Failed artifacts remain at `/tmp/darwin-reply-pty-KBAfYy`. This is worker-side verification history, not a Host acceptance failure; Host's fresh full gate passed first attempt.
+
+### Documentation wrap-up
+
+Accepted commit synchronizes `README.md`, `README.zh-CN.md`, English/zh-CN `docs/user-guide/using-darwin` and `reference` pages, plus the existing Ctrl+G/editor and prompt-queue sections of `docs/architecture/load-bearing-decisions.md`. No separate sync needed; no extra implementation channel or task/spec artifact invented. AGENTS unchanged at **32,638 bytes**. Host owns research/backlog/iteration-log closure.
+
+### Worker invocation spend
+
+| Managed task | Outcome | input | output | cacheRead | cacheWrite | Approximate USD total |
+|---|---|---:|---:|---:|---:|---|
+| `bg-6e8c2349-a1f7-413f-8d5f-593db49a99fb` | success, exit 0 | 108 | 46,228 | 8,015,066 | 225,976 | unknown |
+| **Aggregate** | one invocation, no retry/correction | **108** | **46,228** | **8,015,066** | **225,976** | **unknown** |
+
+Exact receipts:
+
+```text
+usage: input=108 output=46228 cacheRead=8015066 cacheWrite=225976
+cost: total=- input=- output=- cacheRead=- cacheWrite=- model=auto pricing=none
+```
+
+Computed exclusive-bucket sum **8,287,378 tokens**. Every token metric is reported; no unknown token bucket. USD total and all cost components are unreported, carried as unknown rather than zero or estimated. These are worker-process receipts, not Host inference. Existing AgentCore in-flight/interrupted-state diagnostic was not inspected/repaired by this feature; no cloud-health claim.
+
+**Halt: batch exhausted.** SER-132 is independently accepted and done, no unfinished routed record remains, none abandoned. Workspace rollback (2), automatic/background compaction (3), and web workbench (−1) were below-gate report-only candidates. Commit closure records, push current `main` once normally, then verify `git log @{u}..` empty before reporting. No force push, release, tag or publication.
