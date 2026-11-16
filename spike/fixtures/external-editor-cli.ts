@@ -66,7 +66,9 @@ class EditorModel extends Model<BaseModelConfig> {
       return;
     }
     let answer = 'local answer';
-    if (text === 'hold') { await released('hold-release'); answer = 'held answer'; }
+    if (text === 'reply-unicode') answer = '第一问 🧪\n\ne\u0301 русский\n\t  code > # literal';
+    else if (text === 'reply-cap') answer = 'a'.repeat(65_533);
+    else if (text === 'hold') { await released('hold-release'); answer = 'held answer'; }
     else if (text === 'Please summarize this conversation.') { await released('summary-release'); answer = 'local summary'; }
     else if (text.startsWith('<task-notification')) answer = 'wake ack';
     else if (afterTool) answer = 'tool step done';
@@ -86,4 +88,5 @@ setRuntimeModelFactoryForTest(async () => {
   }
   return new EditorModel();
 });
-await import('../../src/cli.js');
+if (process.env['EDITOR_DRIVER'] === 'repl') await import('../../src/dev-repl.js');
+else await import('../../src/cli.js');

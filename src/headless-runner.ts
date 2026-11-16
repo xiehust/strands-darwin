@@ -52,6 +52,7 @@ import {
   type StructuredWarning,
 } from './headless-protocol.js';
 import { composeHeadlessPrompt, readPipedStdin, type PipedStdin } from './headless-stdin.js';
+import { parseReplyCommand, REPLY_UNSUPPORTED } from './commands/reply-command.js';
 
 export type HeadlessOptions = CliOptions & { prompt: string; projectRoot: string };
 
@@ -105,6 +106,7 @@ export async function runHeadlessProcess(
   let prompt: string;
   try {
     prompt = composeHeadlessPrompt(options.prompt, await dependencies.readPipedStdin());
+    if (parseReplyCommand(prompt) !== undefined) throw new CliUsageError(REPLY_UNSUPPORTED);
     const review = parseReviewCommand(prompt);
     if (review?.invalid) throw new CliUsageError(review.usage);
   } catch (error) {

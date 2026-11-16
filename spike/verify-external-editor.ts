@@ -36,6 +36,7 @@ import {
   type ExternalEditorOutcome,
 } from '../src/tui/external-editor.js';
 import { normalizeDraftText } from '../src/tui/prompt-editor.js';
+import { replyEditorSeed } from '../src/tui/reply-command.js';
 import { scrubShellEnv, withDarwinMarker } from '../src/tools/shell-env.js';
 import { assert, header, report } from './shared.js';
 
@@ -110,6 +111,26 @@ async function edit(
   });
   const outcome = await run.done;
   return { outcome, record: (await records())[0], clean: (await leftovers()).length === 0 };
+}
+
+header('SER-132 R1/R6 — exact quoted bytes through the existing real editor process');
+{
+  const answer = '第一问 🧪\n\ne\u0301 русский\n\t  code > # literal\n';
+  const seed = replyEditorSeed([{ kind: 'assistant', id: 'reply', part: 'whole', text: answer, codeOpen: false }]);
+  if (!('text' in seed)) throw new Error(seed.notice);
+  const expected = '> 第一问 🧪\n> \n> e\u0301 русский\n> \t  code > # literal\n> \n\n';
+  const unchanged = await edit(seed.text, 'none');
+  assert('real file contains exact multilingual/multiline quote bytes', unchanged.record?.content === expected);
+  assert('unchanged quote is detected and storage removed', unchanged.outcome.kind === 'unchanged' && unchanged.clean);
+  const changed = await edit(seed.text, 'append', { FIXTURE_TEXT: 'reply 世界' });
+  assert('quotes and comments stay literal in changed result', changed.outcome.kind === 'changed' && changed.outcome.text === expected + 'reply 世界');
+  assert('changed quote uses private sanitized process path and cleans up', changed.clean && changed.record?.dirMode === 0o700 && changed.record.fileMode === 0o600 && changed.record.secret === null);
+  const rawSeed = replyEditorSeed([{ kind: 'assistant', id: 'crlf', part: 'whole', text: '第一问\r\nsecond\rthird\u0001', codeOpen: false }]);
+  if (!('text' in rawSeed)) throw new Error(rawSeed.notice);
+  const rawUnchanged = await edit(rawSeed.text, 'none');
+  assert('an untouched non-normalized transcript seed preserves the original composer', rawUnchanged.outcome.kind === 'unchanged' && rawUnchanged.record?.content === rawSeed.text && rawUnchanged.clean);
+  const rawChanged = await edit(rawSeed.text, 'append', { FIXTURE_TEXT: 'reply' });
+  assert('an actually changed quote still uses only the composer text policy', rawChanged.outcome.kind === 'changed' && rawChanged.outcome.text === normalizeDraftText(rawSeed.text + 'reply') && rawChanged.clean);
 }
 
 header('P1 resolution — VISUAL first, then EDITOR; nothing guessed');

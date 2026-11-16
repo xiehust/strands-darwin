@@ -121,7 +121,9 @@ try {
   assert.equal(readPolicy().pairs.length, 0);
   console.log('PASS runtime streaming, literal peer provenance, replay/recall/rewind and clear/rewind/cancel fences');
 
-  const tui = startTui({ cwd: root, entry: fixture, cols: 140, rows: 42, env });
+  const replyEditor = path.join(home, 'reply-editor.js');
+  writeFileSync(replyEditor, `require('node:fs').writeFileSync(${JSON.stringify(path.join(root, 'reply-editor-launched'))}, 'launched');`);
+  const tui = startTui({ cwd: root, entry: fixture, cols: 140, rows: 42, env: { ...env, VISUAL: `${process.execPath} ${replyEditor}` } });
   const local = new LocalCollaboration(root, `test-${randomUUID()}`); await local.start();
   try {
     await tui.waitFor('you>', { timeoutMs: 30_000, settleMs: 100 });
@@ -157,6 +159,16 @@ try {
     // Ctrl+U and the next prompt, leaving `retained drafthold peer queue` on the wire.
     await tui.waitUntil(() => /(?:^|\n)you>[ \t]*(?:\r?\n|$)/.test(tui.frame), { settleMs: 100 });
     console.log('PASS SER-130 peer /recap provenance notice, zero model requests and retained draft');
+    const replyMark = tui.mark(), replyCalls = requests(root).length;
+    tui.send('retained reply draft');
+    await deliver(local, first.endpoint, '/reply');
+    await tui.waitFor('/reply is TUI-only and requires an explicit local human request', { from: replyMark, settleMs: 200 });
+    assert.equal(requests(root).length, replyCalls, 'peer /reply is local refusal, not model work');
+    assert(!existsSync(path.join(root, 'reply-editor-launched')), 'peer text never authorizes the real editor');
+    assert(tui.frame.includes('you> retained reply draft'), 'peer reply refusal preserves the human composer');
+    tui.send('\u0015');
+    await tui.waitUntil(() => /(?:^|\n)you>[ \t]*(?:\r?\n|$)/.test(tui.frame), { settleMs: 100 });
+    console.log('PASS SER-132 authenticated peer /reply refuses without editor/model authority');
     const busy = tui.mark(); tui.submit('hold peer queue');
     await tui.waitFor('working…', { from: busy, settleMs: 100 });
     await waitFor(() => requests(root).some(call => call.messages.at(-1)?.content.some((b: any) => b.text === 'hold peer queue')), 'held model call');

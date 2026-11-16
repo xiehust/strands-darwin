@@ -249,6 +249,8 @@ import {
 import { liveBackgroundDelegationRefusal } from '../agent/background-delegation.js';
 import { createContextWarnLatch, formatContextReport, formatContextReportWithBreakdown } from './context-format.js';
 import { COPY_COMMAND_USAGE, runCopyCommand } from './copy-command.js';
+import { parseReplyCommand, REPLY_USAGE, REPLY_UNSUPPORTED } from '../commands/reply-command.js';
+import { replyEditorSeed } from './reply-command.js';
 import { formatHelpReport } from './help-format.js';
 import { DIFF_USAGE, parseDiffCommand, runGitDiff, type RunningGitDiff } from './git-diff.js';
 import { readSessionsReport } from './sessions-format.js';
@@ -371,7 +373,7 @@ export function App({
     () => withNoticeDiagnostics(recordAction, runtime.diagnostics),
     [recordAction, runtime],
   );
-  // The transcript as of the latest render, for `/copy`: `submit` is memoized on a
+  // The transcript as of the latest render, for `/copy` and `/reply`: `submit` is memoized on a
   // few deps and must not be rebuilt on every streamed line, so it reads the history
   // through this mirror rather than closing over `state`.
   const historyRef = useRef(state.history);
@@ -606,6 +608,8 @@ export function App({
    * history is frozen at its released length: Ink discards renders while suspended,
    * so a notice committed then would advance `<Static>` past an item never printed.
    */
+  // submit is declared before the handoff callback; only human Enter may use this ref.
+  const openReplyEditor = useRef<() => void>(() => {});
   const editorActive = useRef(false);
   const editorRun = useRef<ExternalEditorRun | undefined>(undefined);
   const [heldHistory, setHeldHistory] = useState<readonly HistoryItem[] | undefined>(undefined);
@@ -1575,10 +1579,18 @@ export function App({
   );
 
   const submit = useCallback(
-    async (raw: string, queuedEntry?: QueuedPrompt) => {
+    async (raw: string, queuedEntry?: QueuedPrompt, human = false) => {
       dismissSuggestion();
       editorPrefix.current = false;
       const text = raw.trim();
+      // Before queueing, clearing or draft reset. Session/queued text is not editor authority.
+      const reply = parseReplyCommand(text);
+      if (reply !== undefined) {
+        if (!human || queuedEntry !== undefined) recordAction({ type: 'notice', text: REPLY_UNSUPPORTED });
+        else if (reply === 'usage') recordAction({ type: 'notice', text: REPLY_USAGE });
+        else openReplyEditor.current();
+        return;
+      }
       const diff = parseDiffCommand(text);
       const recap = parseRecapCommand(text);
       if (recap !== undefined) {
@@ -2634,8 +2646,8 @@ export function App({
     if (!peer) return;
     draining.current = true;
     dispatch({ type: 'notice', text: peerNotice(peer) });
-    if (parseRecapCommand(peer.envelope.text) !== undefined) {
-      recordAction({ type: 'notice', text: RECAP_UNSUPPORTED });
+    if (parseReplyCommand(peer.envelope.text) !== undefined || parseRecapCommand(peer.envelope.text) !== undefined) {
+      recordAction({ type: 'notice', text: parseReplyCommand(peer.envelope.text) !== undefined ? REPLY_UNSUPPORTED : RECAP_UNSUPPORTED });
       draining.current = false; setDrainCycle(cycle => cycle + 1);
       return;
     }
@@ -3049,7 +3061,8 @@ export function App({
   }, [applyRecalled, history, setRecall]);
 
   /**
-   * Ctrl+G (SER-113): edit the exact unsent draft in the user's VISUAL/EDITOR. Eligible
+   * Ctrl+G/alias (SER-113/124) edits the exact draft; human /reply (SER-132) seeds
+   * the quoted completed transcript answer. Both use the user's VISUAL/EDITOR. Eligible
    * only at idle with nothing about to claim the session; the editor gets the terminal
    * through Ink's `suspendTerminal`, darwin's own tty reads are paused for its lifetime
    * (see `quiesceTerminalInput`), and drains hold behind the shared `draining` latch.
@@ -3057,15 +3070,19 @@ export function App({
    * Everything else — refusal, launch failure, nonzero/signal exit, invalid output or
    * no change — leaves the draft, cursor and image exactly as they were.
    */
-  const openExternalEditor = useCallback(() => {
+  const openExternalEditor = useCallback((seedKind: 'draft' | 'reply' = 'draft') => {
     editorPrefix.current = false;
-    if (historySearchRef.current !== undefined || rewindSearchRef.current !== undefined) return;
+    const gesture = seedKind === 'reply' ? '/reply' : 'Ctrl+G';
+    if (historySearchRef.current !== undefined || rewindSearchRef.current !== undefined) {
+      if (seedKind === 'reply') dispatch({ type: 'notice', text: '/reply waits until the composer owns input — draft unchanged', severity: 'warn' });
+      return;
+    }
     const goalOwed = goalAction(goalRef.current, {
       idle: true, permissionPending: false, clearing: false, draining: false, queued: 0, peerPending: 0,
     }) !== 'none';
     const refusal = externalEditorRefusal({
       editorActive: editorActive.current,
-      idle: status === 'idle' && pendingPermission === undefined && diffRun.current === undefined,
+      idle: statusRef.current === 'idle' && permissions.current === undefined && diffRun.current === undefined,
       queued: queuedRef.current.length,
       draining: draining.current,
       clearing: clearing.current,
@@ -3075,12 +3092,18 @@ export function App({
     });
     if (refusal === 'ignore') return;
     if (refusal !== undefined) {
-      dispatch({ type: 'notice', text: refusal, severity: 'warn' });
+      dispatch({ type: 'notice', text: refusal.replace('Ctrl+G', gesture), severity: 'warn' });
+      return;
+    }
+    const original = editorRef.current;
+    const seed = seedKind === 'reply' ? replyEditorSeed(historyRef.current) : { text: original.text };
+    if ('notice' in seed) {
+      dispatch({ type: 'notice', text: seed.notice, severity: 'warn' });
       return;
     }
     const command = resolveEditorCommand(process.env);
     if (command.kind === 'unset') {
-      dispatch({ type: 'notice', text: EXTERNAL_EDITOR_UNSET_NOTICE, severity: 'warn' });
+      dispatch({ type: 'notice', text: EXTERNAL_EDITOR_UNSET_NOTICE.replace('Ctrl+G', gesture), severity: 'warn' });
       return;
     }
     if (command.kind === 'refused') {
@@ -3089,11 +3112,10 @@ export function App({
     }
     const terminalInput = focusInput?.source ?? stdin;
     if (!terminalInput.isTTY || !canQuiesceTerminalInput(terminalInput)) {
-      dispatch({ type: 'notice', text: 'Ctrl+G needs an interactive terminal darwin can hand over safely — draft unchanged', severity: 'warn' });
+      dispatch({ type: 'notice', text: `${gesture} needs an interactive terminal darwin can hand over safely — draft unchanged`, severity: 'warn' });
       return;
     }
 
-    const original = editorRef.current;
     const label = editorLabel(command.argv);
     // The same sanitized map the model's `bash` gets, plus `DARWIN=1` (SER-082/094).
     const env = withDarwinMarker(scrubShellEnv(process.env, runtime.info.shellEnv.passthrough).env);
@@ -3117,7 +3139,7 @@ export function App({
         try {
           await suspendTerminal(async () => {
             restartInput = await quiesceTerminalInput(terminalInput);
-            const run = runExternalEditor(original.text, {
+            const run = runExternalEditor(seed.text, {
               argv: command.argv,
               cwd,
               env,
@@ -3169,7 +3191,8 @@ export function App({
         dispatch({ type: 'notice', text: `external editor storage: ${outcome.cleanupProblem}`, severity: 'warn' });
       }
     })();
-  }, [dispatch, focusInput, pendingPermission, runtime, setDismissedCompletion, setEditor, setRecall, setSelectedCompletion, status, stdin, suspendTerminal, waitUntilRenderFlush]);
+  }, [dispatch, focusInput, permissions, runtime, setDismissedCompletion, setEditor, setRecall, setSelectedCompletion, stdin, suspendTerminal, waitUntilRenderFlush]);
+  openReplyEditor.current = () => openExternalEditor('reply');
 
   const handleInterrupt = useCallback(() => {
     const now = Date.now();
@@ -3518,7 +3541,7 @@ export function App({
       // Submitting is the end of the walk too: the record's entry has become this
       // session's prompt, and the indicator has nothing left to describe.
       endRecall();
-      void submit(editorRef.current.text);
+      void submit(editorRef.current.text, undefined, true);
       return;
     }
     // A pty or terminal may batch printable text with Enter on either side of
@@ -3557,7 +3580,7 @@ export function App({
       preferredColumn.current = undefined;
       setSelectedCompletion(0);
       endRecall();
-      void submit(next.text);
+      void submit(next.text, undefined, true);
       return;
     }
 

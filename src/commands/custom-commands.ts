@@ -8,7 +8,7 @@ export const COMMANDS_DIRNAME = 'commands';
 export const ARGUMENTS_PLACEHOLDER = '$ARGUMENTS';
 
 /** Commands shown in completion, in their stable display order. */
-export const BUILTIN_COMMAND_NAMES = ['agents', 'clear', 'cloud-memory', 'collaborate', 'compact', 'context', 'copy', 'diff', 'effort', 'exit', 'export', 'goal', 'help', 'init', 'list-agents', 'mcp', 'memory', 'mode', 'model', 'permissions', 'recap', 'rename', 'review', 'rewind', 'sessions', 'setup-agentcore-memory', 'status', 'tangent', 'tasks', 'trajectory', 'usage', 'workflow'] as const;
+export const BUILTIN_COMMAND_NAMES = ['agents', 'clear', 'cloud-memory', 'collaborate', 'compact', 'context', 'copy', 'diff', 'effort', 'exit', 'export', 'goal', 'help', 'init', 'list-agents', 'mcp', 'memory', 'mode', 'model', 'permissions', 'recap', 'rename', 'reply', 'review', 'rewind', 'sessions', 'setup-agentcore-memory', 'status', 'tangent', 'tasks', 'trajectory', 'usage', 'workflow'] as const;
 
 /**
  * One-phrase completion-row descriptions, total over {@link BUILTIN_COMMAND_NAMES}
@@ -59,6 +59,7 @@ export const BUILTIN_COMMAND_DESCRIPTIONS: Readonly<
   permissions: 'list/test allow/deny rules, revoke allow-rules',
   recap: 'generate a short session recap (local human, idle TUI only)',
   rename: 'set this session’s display label: /rename <label>',
+  reply: 'quote the last answer in your editor; return unsent (idle TUI only)',
   // Prompt guidance only; the active permission mode still governs tool calls.
   review: 'review current changes for bugs and test gaps',
   // Conversation only: branches from an SDK checkpoint and never rolls back files.

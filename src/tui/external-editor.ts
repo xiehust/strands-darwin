@@ -1,6 +1,7 @@
 /**
- * Ctrl+G external prompt editing (SER-113): the exact unsent composer text, edited in
- * the user's own `VISUAL` (else `EDITOR`), returned to the composer unsent.
+ * External prompt editing (SER-113/132): exact draft (Ctrl+G/alias), or the bounded
+ * quoted completed-answer seed (/reply), edited in the user's `VISUAL` (else `EDITOR`)
+ * and returned to the composer unsent. The App alone authorizes the human handoff.
  *
  * Policy. This is explicit user-authorized input editing, not a model tool: it never
  * enters the permission gate (whose subject is model tool calls), never reads
@@ -354,6 +355,9 @@ export function runExternalEditor(text: string, options: ExternalEditorOptions):
     if (exit.code !== 0) return { kind: 'failed', reason: `${label} exited with code ${exit.code}` };
     const read = await readEditorResult(file);
     if (!read.ok) return { kind: 'failed', reason: read.reason };
+    // A quoted transcript seed need not already obey composer normalization.
+    // An untouched file is still unchanged, never an implicit adoption of context.
+    if (read.text === text) return { kind: 'unchanged' };
     const next = options.normalize(read.text);
     if (!withinEditorCaps(next)) return { kind: 'failed', reason: `the result exceeds ${CAP_REASON}` };
     return next === text ? { kind: 'unchanged' } : { kind: 'changed', text: next };

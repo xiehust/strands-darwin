@@ -3478,6 +3478,30 @@ it is user-authorized and outside the permission gate, but it is input editing, 
 reported to the model: nothing is recorded, sent or queued, and the result is ordinary draft
 text that becomes a `userInput` only when the user presses Enter. The decisions below carry it.
 
+**`/reply` is a second seed, not a second handoff or send path** (SER-132;
+`src/commands/reply-command.ts`, `src/tui/reply-command.ts`). Only the composer's explicit
+human Enter routes a no-argument command to `openExternalEditor('reply')`; the shared
+callback's live ownership checks run before reading context or launching. Queued/session
+invocations and exact peer commands refuse locally; headless refuses before runtime
+construction and dev-REPL before `send`. Model output, tools and command expansions have
+no editor authority. The seed is `latestCompletedAnswer(historyRef.current)`, the `/copy`
+projection, including restored transcript — no model history traversal, disk reread or
+unfinished streaming fragments. Every answer line gets `> ` and the seed ends in `\n\n`.
+Preflight counts the expanded code points and UTF-8 bytes before constructing or writing
+an over-cap quote. Missing answer, arguments and editor/cap failures produce local guidance; no truncation,
+model, tool, network or queue work. Valid changed output retains quoted/comment-looking
+lines literally (only `normalizeDraftText` applies) and returns unsent with the image still
+attached. Unchanged/failure preserve the exact original composer, including `/reply` and
+its cursor, rather than adopting the quote seed. After strict bounded file validation,
+raw seed/result equality is unchanged before normalization, so untouched CRLF/control-bearing
+transcript context cannot masquerade as a human edit; changed files still use the existing
+composer policy. The stash/image never enter the file.
+Ctrl+G and its alias keep their exact-draft seed. No new frame participant exists; the 33rd
+built-in raises both help and completion offer caps to 33. Executable receipts are
+`verify-reply-command.ts`, `verify-reply-command-pty.ts`, the quote case plus P1–P13 in
+`verify-external-editor.ts`, the unchanged aliases in `verify-external-editor-pty.ts`,
+authenticated peer refusal in `verify-collaboration-drivers.ts`, and `verify-tui.ts completion`.
+
 - **No shell, no guessing.** The variable is parsed into a bounded argv (≤1,024 code points,
   ≤32 words; POSIX-style quotes and backslashes) and spawned with `shell: false`. Unquoted shell
   syntax and substitutions inside double quotes are refused with a reason that never echoes the
@@ -3529,7 +3553,7 @@ text that becomes a `userInput` only when the user presses Enter. The decisions 
   are capped at 65,536 code points and 256 KiB, refused not truncated. The result is read
   through one descriptor (`O_NOFOLLOW | O_NONBLOCK`, regular file only, at most cap+1 bytes
   however the file grows) and strict UTF-8 (a BOM stays text). Only the composer's
-  `normalizeDraftText` (moved to `prompt-editor.ts`, unchanged) is applied. Only the draft text
+  `normalizeDraftText` (moved to `prompt-editor.ts`, unchanged) is applied. Only the chosen text seed
   is written — the attached image and the Ctrl+S stash stay in memory and a pending clipboard
   read is invalidated. The directory is removed on every settlement. Editor swap or backup
   files elsewhere are outside darwin's reach, and the guide says so.
@@ -3562,8 +3586,9 @@ At most 16 entries are admitted per boundary; later arrivals wait for another bo
 Commands (`!` and `/`), images and session-originated wakes are FIFO barriers, never skipped or
 reinterpreted as human text. At idle the existing effect drains remaining entries one at a time
 through ordinary `submit()`, so no-tool turns and ineligible entries retain their prior behavior.
-What refuses
-instead of queueing is a closed set (`refusesToQueue`): `/clear`, `/compact`, `/model`, `/exit`,
+Human-only editor composition (`/reply`, like the Ctrl+G handoff) refuses locally before
+the queue path; it never becomes a delayed editor invocation. What refuses
+instead of queueing at the ordinary busy guard is a closed set (`refusesToQueue`): `/clear`, `/compact`, `/model`, `/exit`,
 `/quit` — session-replacing commands whose delayed, unprompted execution would be worse than a
 second Enter; they keep SER-010's refusal-with-retained-draft shape, stated as the deliberate
 exception. Local report commands stay above the busy check and keep answering mid-turn. The
