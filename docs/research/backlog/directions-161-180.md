@@ -278,7 +278,7 @@ Read the origin report's S1–S6/R1–R4 evidence and the applicable AGENTS load
 
 ## SER-132 — User-only /reply opens the last completed answer as quoted editor context and returns edits unsent
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 172
 - Score: 11
 - Importance: 3
