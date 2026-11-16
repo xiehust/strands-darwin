@@ -252,7 +252,7 @@ Score 10 ≥ 6. Implemented sequentially after accepted/rebuilt SER-129, with a 
 
 ## SER-131 — Upgrade the pinned Strands SDK to 1.25.0 while preserving Darwin's patched contracts
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 171
 - Score: 10
 - Importance: 5
@@ -264,7 +264,7 @@ Score 10 ≥ 6. Implemented sequentially after accepted/rebuilt SER-129, with a 
 
 ### Implementation / acceptance evidence
 
-None yet. Installed and declared SDK are 1.21.0. The [1.25.0 release](https://github.com/strands-agents/harness-sdk/releases/tag/typescript/v1.25.0), published 2026-11-13T16:54:31Z, and npm metadata were checked on 2026-11-16. Independent acceptance is required before `done`.
+Host verified clean starting commit `e775facb7aa26b970090ae47945628abdcb9a8b3`: focused `pnpm tsx spike/verify-skills.ts`, `pnpm typecheck` and full `pnpm test` passed in task `bg-63911ed1-d6bc-4316-8e81-e9ec1fa88ade` (exit 0). No implementation accepted yet. Installed and declared SDK are 1.21.0. The [1.25.0 release](https://github.com/strands-agents/harness-sdk/releases/tag/typescript/v1.25.0), published 2026-11-13T16:54:31Z, and npm metadata were checked on 2026-11-16. Independent acceptance is required before `done`.
 
 ### Notes / blockers / abandonment reason
 
