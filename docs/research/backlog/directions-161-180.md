@@ -275,3 +275,27 @@ Independent semantic patch comparison confirmed all 54 old hunks accounted for, 
 Upgrade the exact pin to 1.25.0 with a minimal lockfile update and rebase the authoritative `patches/@strands-agents__sdk@1.21.0.patch` onto the new package. `pnpm-workspace.yaml` must point at the new versioned patch, and `pnpm build` regenerates the npm dialect under `dist/patches/`. Compare each hunk against pristine upstream; retire it only when the same contract is demonstrably covered upstream (especially SER-101 reasoning). Preserve SDK-loop reuse, permissions, existing tool names, file-editor safety, foreground/background shell cleanup, durable offload/legacy repair/skill exclusion, prompt/session semantics and current runtime defaults. No unsolicited adoption of new vended tools, context manager, provider-side compaction, shared storage or invocation policy.
 
 Read the origin report's S1–S6/R1–R4 evidence and the applicable AGENTS load-bearing sections. Reverify `pnpm typecheck`, every `pnpm test` suite and every load-bearing row citing the pinned SDK patch, plus frozen installation, real registry packaging, build and patch-dependent PTY/live checks enumerated in the report. Document exact outcomes, not merely child claims. Respect pnpm's effective `minimumReleaseAge`: wait if held, never bypass it. Host must verify a clean green starting revision before marking this record `in-progress` and launching its own fresh developer child. Maximum difficulty/risk ratings reflect upstream offload/stream/model changes, not a reason to stop the iteration.
+
+## SER-132 — User-only /reply opens the last completed answer as quoted editor context and returns edits unsent
+
+- Status: `not-started`
+- Priority: 172
+- Score: 11
+- Importance: 3
+- Architecture fit: 5
+- Evidence confidence: 5
+- Difficulty: 3
+- Risk: 2
+- Origin report: [`research_2026-11-16.md`](../research_2026-11-16.md) (run `09:11:33Z`, rolled `peer`)
+
+### Implementation / acceptance evidence
+
+Not implemented. Independent acceptance pending.
+
+### Notes / blockers / abandonment reason
+
+Source: origin report S8 (https://kiro.dev/docs/cli/chat/responding/) documents point-by-point quoted editor replies; R2–R3 demonstrate Darwin only seeds the exact unsent draft and has no /reply built-in. This is not an external-editor/stash/copy duplicate: those already ship, while automatic previous-answer quoting does not.
+
+Implement idle human TUI `/reply` without arguments through the existing external-editor handoff, using `latestCompletedAnswer(history)` and prefixing every answer line with `> ` plus a blank reply area. Edited quote lines remain literal text. Valid changed output returns to the composer unsent; only subsequent Enter sends normally. Ctrl+G/Ctrl+X Ctrl+E continue exact-draft editing. No answer/invalid args/over-cap quote seed/unsupported driver/editor error are explicit local outcomes; never truncate silently, enqueue or invoke model/tool. Existing editor caps, no-shell argv, scrubbed env, private storage/cleanup, owner/refusal fences, attachment/stash privacy and failure/unchanged exact-state preservation remain authoritative. Headless/dev-REPL reject locally as TUI-only.
+
+Acceptance: requirement-to-check checklist; real-file and local-model PTY evidence for exact quote bytes and last completed answer selection, unsent-until-Enter/no trajectory prompt, image/stash privacy and unchanged/failure/cap/no-answer/args/busy/modal/queue behavior. Canonical reservation, all built-ins visible in completion/help, driver refusals; full `pnpm typecheck`/`pnpm test`, free `verify-tui.ts completion`, Host `pnpm build` and CLI smoke. Synchronize English/zh-CN README, narrative using-darwin and reference, and existing editor architecture/contract surfaces. No dependencies or permission/runtime/history-policy changes. One fresh developer-supervised child; Host independently accepts before closure and appends the supervision record. Score 11 passes proposal/selection gate; no dependencies.
