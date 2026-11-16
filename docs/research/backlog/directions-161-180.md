@@ -249,3 +249,25 @@ Acceptance: pure eligibility/dedup state with a controlled clock; real terminal 
 User confirmed on 2026-10-19: “默认开启、分别可关闭，并接受额外的后台模型调用. 按 Claude Code 的离开后返回场景触发，而非每轮都总结”. Automatic recap must default on with its own off switch, independent of `promptSuggestions`; additional auxiliary inference is authorized. Use away/return behavior, never a summary after every response. Disabling automatic recap does not turn an explicit human `/recap` into background work: retain the manual path described by the primary source, with ordinary local provenance and visible cost. Keep the existing no-network resume replay unchanged.
 
 Score 10 ≥ 6. Implemented sequentially after accepted/rebuilt SER-129, with a fresh child and first-attempt independent Host acceptance; no correction, Host implementation edit, dependency or SDK patch. The stdin inventory regression keeps the headless reader's sole caller and inventories the exact new interactive adapter construction. AGENTS stays under its existing 32 KiB assertion. Limitations are explicit: evidence is this interactive visit's last six qualifying text exchanges, not restored history; unsupported focus reporting means no automatic recap, while manual `/recap` remains. Generated claims are labelled unverified and omissions/truncation/spend are stated. The batch is exhausted after this accepted closure.
+
+## SER-131 — Upgrade the pinned Strands SDK to 1.25.0 while preserving Darwin's patched contracts
+
+- Status: `not-started`
+- Priority: 171
+- Score: 10
+- Importance: 5
+- Architecture fit: 5
+- Evidence confidence: 5
+- Implementation difficulty: 5
+- Implementation risk: 5
+- Origin report: [`research_2026-11-16.md`](../research_2026-11-16.md) (run `02:22:24Z`, user-directed `sdk`)
+
+### Implementation / acceptance evidence
+
+None yet. Installed and declared SDK are 1.21.0. The [1.25.0 release](https://github.com/strands-agents/harness-sdk/releases/tag/typescript/v1.25.0), published 2026-11-13T16:54:31Z, and npm metadata were checked on 2026-11-16. Independent acceptance is required before `done`.
+
+### Notes / blockers
+
+Upgrade the exact pin to 1.25.0 with a minimal lockfile update and rebase the authoritative `patches/@strands-agents__sdk@1.21.0.patch` onto the new package. `pnpm-workspace.yaml` must point at the new versioned patch, and `pnpm build` regenerates the npm dialect under `dist/patches/`. Compare each hunk against pristine upstream; retire it only when the same contract is demonstrably covered upstream (especially SER-101 reasoning). Preserve SDK-loop reuse, permissions, existing tool names, file-editor safety, foreground/background shell cleanup, durable offload/legacy repair/skill exclusion, prompt/session semantics and current runtime defaults. No unsolicited adoption of new vended tools, context manager, provider-side compaction, shared storage or invocation policy.
+
+Read the origin report's S1–S6/R1–R4 evidence and the applicable AGENTS load-bearing sections. Reverify `pnpm typecheck`, every `pnpm test` suite and every load-bearing row citing the pinned SDK patch, plus frozen installation, real registry packaging, build and patch-dependent PTY/live checks enumerated in the report. Document exact outcomes, not merely child claims. Respect pnpm's effective `minimumReleaseAge`: wait if held, never bypass it. Host must verify a clean green starting revision before marking this record `in-progress` and launching its own fresh developer child. Maximum difficulty/risk ratings reflect upstream offload/stream/model changes, not a reason to stop the iteration.
