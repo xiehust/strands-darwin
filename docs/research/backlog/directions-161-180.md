@@ -258,15 +258,15 @@ Score 10 ≥ 6. Implemented sequentially after accepted/rebuilt SER-129, with a 
 - Importance: 5
 - Architecture fit: 5
 - Evidence confidence: 5
-- Implementation difficulty: 5
-- Implementation risk: 5
+- Difficulty: 5
+- Risk: 5
 - Origin report: [`research_2026-11-16.md`](../research_2026-11-16.md) (run `02:22:24Z`, user-directed `sdk`)
 
 ### Implementation / acceptance evidence
 
 None yet. Installed and declared SDK are 1.21.0. The [1.25.0 release](https://github.com/strands-agents/harness-sdk/releases/tag/typescript/v1.25.0), published 2026-11-13T16:54:31Z, and npm metadata were checked on 2026-11-16. Independent acceptance is required before `done`.
 
-### Notes / blockers
+### Notes / blockers / abandonment reason
 
 Upgrade the exact pin to 1.25.0 with a minimal lockfile update and rebase the authoritative `patches/@strands-agents__sdk@1.21.0.patch` onto the new package. `pnpm-workspace.yaml` must point at the new versioned patch, and `pnpm build` regenerates the npm dialect under `dist/patches/`. Compare each hunk against pristine upstream; retire it only when the same contract is demonstrably covered upstream (especially SER-101 reasoning). Preserve SDK-loop reuse, permissions, existing tool names, file-editor safety, foreground/background shell cleanup, durable offload/legacy repair/skill exclusion, prompt/session semantics and current runtime defaults. No unsolicited adoption of new vended tools, context manager, provider-side compaction, shared storage or invocation policy.
 
