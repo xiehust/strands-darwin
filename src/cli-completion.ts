@@ -21,7 +21,7 @@ const ARGUMENTS = {
 
 export const COMPLETION_GRAMMAR: Readonly<Record<string, CompletionState>> = {
   root: { words: {
-    completion: 'completion', sessions: 'end', 'list-agents': 'end',
+    completion: 'completion', update: 'update', sessions: 'end', 'list-agents': 'end',
     collaborate: 'collaborate', permissions: 'permissions', mcp: 'mcp',
     import: 'import', doctor: 'end', 'cloud-memory': 'cloud', trajectory: 'trajectory',
     ...ARGUMENTS,
@@ -34,6 +34,7 @@ export const COMPLETION_GRAMMAR: Readonly<Record<string, CompletionState>> = {
   permission: { words: { default: 'args', auto: 'args', plan: 'args', yolo: 'args' } },
   output: { words: { text: 'args', json: 'args', 'stream-json': 'args' } },
   completion: { words: { bash: 'end' } },
+  update: { words: { '--install': 'end' } },
   permissions: { words: { test: 'rule' } },
   rule: { operand: 'end' },
   mcp: { words: { login: 'serverLogin', logout: 'serverLogout' } },

@@ -18,6 +18,28 @@ The registry package is `strands-darwin`; the command is `darwin`. The package's
 
 `pnpm add -g strands-darwin` is unsupported: pnpm blocks a dependency's build scripts by default (the `postinstall` lands in `ignoredBuilds`), and even with `--allow-build` its isolated layout places the SDK beside the package, where `patch-package` cannot find it.
 
+### Check for updates and upgrade
+
+```bash
+darwin update             # query npm now; report installed/latest versions only
+darwin update --install   # explicitly install a newer version
+```
+
+Manual checks query the official npm registry once with a 5-second timeout, bypassing the
+startup notice's 24-hour cache and off switches. They also work in a source checkout and
+never read model config or start a session. Registry errors are reported with exit 1;
+invalid arguments exit 2. A successful check exits 0 whether or not an update is available.
+
+`--install` supports POSIX npm global installations only. It refuses source checkouts/links
+and a package that does not match `npm prefix -g`, rather than overwriting another install.
+It installs the exact version just checked into that same prefix using the user's npm
+configuration, then runs the installed CLI's `--version` before reporting success. No
+`sudo`, downgrade, automatic retry or rollback is attempted. Timeout (10 minutes) or
+Ctrl+C stops the npm process group and reports that installation may be incomplete.
+Restart other Darwin sessions after upgrading. For a source-linked CLI, update the
+checkout and run `pnpm build` instead. Existing SDK patch preflight still applies; an
+unpatched installation must be repaired with the manual npm command shown in its refusal.
+
 ### Bash completion
 
 Generate a file at a path you choose, inspect it, then load it into your current Bash:

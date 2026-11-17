@@ -183,19 +183,47 @@ async function writeCache(file: string, cache: UpdateCheckCache): Promise<void> 
 }
 
 async function fetchLatest(url: string, timeoutMs: number, fetchImpl: typeof fetch): Promise<string | undefined> {
-  try {
-    const response = await fetchImpl(url, {
-      headers: { accept: 'application/json' },
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    if (!response.ok) return undefined;
-    const declared = Number(response.headers.get('content-length'));
-    if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) return undefined;
-    const body = await response.text();
-    if (body.length > MAX_BODY_BYTES) return undefined;
-    const version = (JSON.parse(body) as { version?: unknown }).version;
-    return typeof version === 'string' && SEMVER.exec(version) !== null ? version : undefined;
-  } catch {
-    return undefined;
+  try { return await fetchLatestVersion({ url, timeoutMs, fetchImpl }); }
+  catch { return undefined; }
+}
+
+/** One uncached registry read. Explicit commands report errors; startup catches them. */
+export async function fetchLatestVersion(options: {
+  url?: string; timeoutMs?: number; fetchImpl?: typeof fetch;
+} = {}): Promise<string> {
+  const response = await (options.fetchImpl ?? fetch)(options.url ?? DEFAULT_REGISTRY_URL, {
+    headers: { accept: 'application/json' },
+    signal: AbortSignal.timeout(options.timeoutMs ?? UPDATE_CHECK_TIMEOUT_MS),
+  });
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw new Error(`npm registry returned HTTP ${response.status}`);
   }
+  const declared = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+    await response.body?.cancel();
+    throw new Error('npm registry response is too large');
+  }
+  // Bound streamed bytes too: Content-Length may be absent or incorrect.
+  const reader = response.body?.getReader();
+  if (reader === undefined) throw new Error('npm registry response has no body');
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > MAX_BODY_BYTES) throw new Error('npm registry response is too large');
+      chunks.push(value);
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
+  const version = (JSON.parse(Buffer.concat(chunks).toString('utf8')) as { version?: unknown }).version;
+  if (typeof version !== 'string' || version.length > 128 || SEMVER.exec(version) === null) {
+    throw new Error('npm registry response has no valid version');
+  }
+  return version;
 }

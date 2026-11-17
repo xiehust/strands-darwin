@@ -18,6 +18,25 @@ npm 包名是 `strands-darwin`，命令是 `darwin`。包的 `postinstall` 脚�
 
 不支持 `pnpm add -g strands-darwin`：pnpm 默认拦截依赖的构建脚本（`postinstall` 会进入 `ignoredBuilds`），即便加上 `--allow-build`，它的隔离目录布局也会把 SDK 放在包的旁边，而不是 `patch-package` 能找到的位置。
 
+### 检查版本与升级
+
+```bash
+darwin update             # 立即查询 npm，只显示已安装版本与最新版本
+darwin update --install   # 显式安装查到的更新版本
+```
+
+手动检查向官方 npm registry 发起一次请求，超时为 5 秒，不受启动提示的 24 小时缓存或
+关闭开关限制。源码版也能检查；不会读取模型配置或启动会话。查询失败时显示错误并以
+退出码 1 结束，参数错误为 2；检查成功为 0，无论是否存在更新。
+
+`--install` 仅支持 POSIX 平台的 npm 全局安装。源码检出／链接版以及与 `npm prefix -g`
+不匹配的安装会被拒绝，避免覆盖另一份程序。升级会使用用户的 npm 配置，将刚查到的
+具体版本安装到同一 prefix，再运行已安装 CLI 的 `--version` 验证成功。不会调用
+`sudo`、降级、自动重试或自动回滚。安装超时（10 分钟）或按 Ctrl+C 时，会终止 npm
+进程组并提示安装可能不完整。完成后请重启其他 Darwin 会话。源码链接版应更新仓库后
+执行 `pnpm build`。原有 SDK 补丁预检仍然有效；缺少补丁的安装需要按拒绝提示中的
+手动 npm 命令修复。
+
 ### Bash 补全
 
 在自选路径生成文件，检查内容后加载到当前 Bash：

@@ -29,6 +29,9 @@ if (refusal !== undefined) {
   if (args[0] === 'completion') {
     const { runCompletionCli } = await import('./cli-completion.js');
     runCompletionCli(args.slice(1));
+  } else if (args[0] === 'update') {
+    const { runUpdateCli } = await import('./cli-update.js');
+    await runUpdateCli(args.slice(1));
   } else if (args[0] === 'collaborate') {
     const { runCollaborationCli } = await import('./collaboration/command.js');
     await runCollaborationCli(process.cwd(), args.slice(1));

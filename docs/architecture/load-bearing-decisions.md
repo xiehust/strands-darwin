@@ -1745,6 +1745,10 @@ revokes pending background correlations; shutdown and startup unwind close the c
 No SDK loop/executor change, event mutation or trajectory schema/bytes/order change. The
 existing durable closing-append settlement callback is required for detached local publication;
 it joins the natural driver-completion seal described below, without observer I/O.
+Runtime upload tests wait for the real trajectory append chain before reading candidate
+previews: SDK stream completion is not durable publication, and `pending` can wait only for
+jobs already delivered to the cloud controller. A gated real post-input append proves this
+ordering without adding waits to the production stream or weakening content assertions.
 Disabled upload installs no hooks or collector. Failure/early return closes collection; failed
 trajectory/pre-stream abort discards it, nondurable settlement consumes it, saturation refuses
 and counts turns, successor/shutdown clears it. Invocation-state identity plus SDK tool-use ID
@@ -3321,7 +3325,12 @@ root, and never awaited by a keystroke**: measured 33ms per scan of this reposit
 keystroke of matching, 0.1ms worst event-loop lag during a scan. And the second source must not make
 the first ambiguous: `computeCompletions` is untouched and wins whenever it has candidates, the menu
 shares one `MAX_COMPLETIONS`, and a bounded or degraded scan is stated as a **suffix of the title
-row the menu already has**.
+row the menu already has**. Matching metadata (lowercase paths and basename offsets) is
+prepared during the bounded async scan and held in a WeakMap keyed by its frozen path
+snapshot. Matching returns original strings/order; arbitrary caller arrays are never cached,
+so mutations cannot produce stale results. The responsiveness suite still tests every cold
+keystroke against the same 5ms wall-time bound; a failure records the prefix, CPU delta and
+observed overlapping GC durations, without warming, subtracting time or retrying a sample.
 
 ## Prompt recall
 
@@ -3829,3 +3838,29 @@ Invariants:
 Free check: `spike/verify-update-check.ts` (in `pnpm test`: semver precedence, every off switch
 with zero requests, interval/cache behaviour, failure shapes, loopback fetch + timeout, call-site
 pins); `spike/verify-config.ts` covers the key.
+
+## Explicit update command — check first, install only by choice
+
+`darwin update [--install]` is dispatched from the bootstrap after SDK patch preflight and
+before the runtime import. The SDK-free module `src/cli-update.ts` answers help/version
+locally and refuses malformed grammar before I/O. Bare invocation performs one uncached
+5-second official-registry request via shared `fetchLatestVersion`; startup's silent/cached
+`checkForUpdate` remains unchanged. Explicit checks ignore startup-only off switches and
+work in source checkouts without loading config, sessions, hooks, MCP, Ink or an Agent.
+The shared reader bounds streamed bytes as well as declared size at 512 KiB. Errors are
+visible exit 1; usage errors are exit 2; a successful check is exit 0.
+
+Only `--install` can execute npm. Source checkouts/worktrees are refused before a request,
+and the POSIX npm global prefix must identify the current real, non-linked package path
+before installation. The argv-only invocation pins the checked version and prefix; it does
+not use a shell, sudo, downgrade, retry or rollback. A 10-minute limit and signal handlers
+reap the npm process group TERM→KILL. Failure/cancel says the install may be incomplete;
+a zero npm exit alone cannot produce success: a fresh installed `--version` subprocess must
+report the exact target (and pass its ordinary SDK preflight). Other live runtimes are never
+replaced or resumed by this command; users restart them manually. The original patch
+preflight still precedes this route, so it is not a repair bypass for unpatched installs.
+
+`verify-update-command.ts` uses real loopback HTTP and owned executable/process fixtures
+for errors, exact argv/prefix, unchanged/broken installs, cancellation/timeout descendants
+and real bootstrap isolation; `verify-update-check.ts`, `verify-cli-args.ts` and
+`verify-cli-completion.ts` retain the startup/grammar/discoverability invariants.

@@ -85,7 +85,7 @@ put(path.join(unpatched, 'package.json'), JSON.stringify({ type: 'module', name:
 for (const file of ['cli.ts', 'sdk-patch-preflight.ts', 'version.ts']) put(path.join(unpatched, file), source(`src/${file}`));
 put(path.join(unpatched, 'node_modules/@strands-agents/sdk/package.json'), JSON.stringify({ type: 'module', exports: './index.js' }));
 put(path.join(unpatched, 'node_modules/@strands-agents/sdk/index.js'), 'throw new Error("SDK MUST NOT LOAD");');
-for (const args of [['completion', 'bash'], ['completion', '--help'], ['completion', '--version']]) {
+for (const args of [['completion', 'bash'], ['completion', '--help'], ['completion', '--version'], ['update', '--install'], ['update', '--help']]) {
   const result = spawnSync(process.execPath, ['--import', import.meta.resolve('tsx'), path.join(unpatched, 'cli.ts'), ...args], {
     cwd, env: { ...process.env, HOME }, encoding: 'utf8', timeout: 15_000,
   });
@@ -139,6 +139,8 @@ expect(['--print', 'mcp', '--output-format', 's'], ['stream-json']);
 expect(['--permission-mode', 'a'], ['auto']);
 expect(['--output-format', 'j'], ['json']);
 expect(['--', 'completion', 'b'], ['bash']);
+expect(['update', '--i'], ['--install']);
+expect(['update', '--install', ''], [], 'used update install flag is terminal');
 expect(['--resume', '--permission-mode', 'p'], ['plan']);
 expect(['--resume', 'trajectory', '--s'], [], 'optional resume id consumed, conflicting session not offered');
 expect(['--session', 'mcp', '--p'], ['--print', '--permission-mode']);
@@ -193,6 +195,7 @@ assert('all root flags, including aliases, match parseCliArgs and local answers'
 assert('permission enum matches the gate constant', same(keys('permission'), quoted(capture('src/agent/permission.ts', /APPROVAL_MODES = (\[[^\]]+\])/))));
 assert('output enum matches parseCliArgs constant', same(keys('output'), quoted(capture('src/cli-args.ts', /HEADLESS_OUTPUT_FORMATS = (\[[^\]]+\])/))));
 assert('completion shell matches the local parser', same(keys('completion'), [capture('src/cli-completion.ts', /argv\[0\] !== '([^']+)'/)]));
+assert('update option matches its local parser', same(keys('update'), [capture('src/cli-update.ts', /argv\[0\] !== '([^']+)'/)]));
 const trajectoryParser = capture('src/cli-trajectory.ts', /export function parseTrajectoryArgs([\s\S]*?)\n}/);
 assert('trajectory verbs match its switch', same(keys('trajectory'), [...trajectoryParser.matchAll(/case '([^']+)':/g)].map(m => m[1]!)));
 const trajectoryFlags = [...source('src/cli-trajectory.ts').matchAll(/parseFlags\(rest\.slice\(1\), (\[[^\]]+\])(?:, (\[[^\]]+\]))?\)/g)];
