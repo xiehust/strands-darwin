@@ -313,7 +313,18 @@ async function createRuntime(offload: boolean, model: UploadModel, upload: 'manu
 }
 header('Real SDK/runtime public fallback paths (no loop/executor replacement)');
 for (const mode of ['batch-cancel', 'generator-error', 'denied', 'transformed'] as const) {
+  // Hold a real post-input append until the SDK stream is complete. This makes
+  // the old preview-before-durable race deterministic, without delaying the loop.
+  let releaseAppend!: () => void, appendBlocked!: () => void;
+  const appendGate = new Promise<void>(resolve => { releaseAppend = resolve; });
+  const blocked = new Promise<void>(resolve => { appendBlocked = resolve; });
+  let appends = 0;
+  setRuntimeRecorderOverridesForTest({ openFile: async (...args) => {
+    if (args[1] === 'a' && ++appends === 2) { appendBlocked(); await appendGate; }
+    return open(...args);
+  } });
   const runtime = await createRuntime(false, new UploadModel());
+  setRuntimeRecorderOverridesForTest(undefined);
   const sdk = (runtime as unknown as { agent: Agent }).agent;
   const controller = (runtime as unknown as { cloudMemory: CloudMemory }).cloudMemory;
   let afterCount = 0; let publicCount = 0;
@@ -323,9 +334,31 @@ for (const mode of ['batch-cancel', 'generator-error', 'denied', 'transformed'] 
   if (mode === 'generator-error') sdk.addMiddleware(ExecuteToolStage, async function* () { throw new Error('GENERATOR ERROR RESULT'); });
   if (mode === 'denied') sdk.addHook(BeforeToolCallEvent, event => { event.cancel = 'DENIED RESULT'; });
   if (mode === 'transformed') sdk.addHook(AfterToolCallEvent, event => { event.result = new ToolResultBlock({ toolUseId: event.result.toolUseId, status: 'success', content: [new TextBlock('TRANSFORMED OUTPUT')] }); });
-  for await (const _event of runtime.send(mode)) {}
+  try {
+    for await (const _event of runtime.send(mode)) {}
+    // pending only waits for jobs already handed to CloudMemory; it cannot wait
+    // for a trajectory append that has not yet published its settlement.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([blocked, new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`post-input append was not reached: ${mode}`)), 5000);
+      })]);
+    } finally { if (timer !== undefined) clearTimeout(timer); }
+    let premature = false;
+    for (const row of (await controller.command('pending')).split('\n')) {
+      const token = row.split(' ')[0]!;
+      if (/^[a-f0-9]{64}$/.test(token) && (await controller.command(`preview ${token}`)).includes(runtime.info.sessionId)) premature = true;
+    }
+    assert(`runtime ${mode}: stream completion is not durable publication`, !premature && publicCount === 1);
+  } finally { releaseAppend(); }
+  await settled(runtime);
   const rows = (await controller.command('pending')).split('\n'); let preview = '';
-  for (const row of rows) { const candidate = await controller.command(`preview ${row.split(' ')[0]}`); if (candidate.includes(runtime.info.sessionId)) preview = candidate; }
+  for (const row of rows) {
+    const token = row.split(' ')[0]!;
+    if (!/^[a-f0-9]{64}$/.test(token)) continue;
+    const candidate = await controller.command(`preview ${token}`);
+    if (candidate.includes(runtime.info.sessionId)) preview = candidate;
+  }
   if (mode === 'batch-cancel' || mode === 'generator-error') {
     assert(`runtime ${mode}: available public result captured and explicitly labelled without After hook`, afterCount === 0 && publicCount === 1 && preview.includes(mode === 'batch-cancel' ? 'BATCH CANCEL RESULT' : 'GENERATOR ERROR RESULT') && preview.includes('ToolResultEvent fallback') && !preview.includes('No corresponding result observed'));
     if (mode === 'batch-cancel') assert('batch cancellation input is labelled requested, not executed', preview.includes('BeforeTools requested input; execution not observed'));
