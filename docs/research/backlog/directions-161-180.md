@@ -306,7 +306,7 @@ Acceptance: requirement-to-check checklist; real-file and local-model PTY eviden
 
 ## SER-133 — Human-only /editor opens a blank unsent prompt through the existing external-editor handoff
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 173
 - Score: 12
 - Importance: 3
