@@ -15,6 +15,7 @@
 import { strict as nodeAssert } from 'node:assert';
 import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { PerformanceObserver, type PerformanceEntry } from 'node:perf_hooks';
 
 import {
   EXCLUDED_DIRECTORY_NAMES,
@@ -153,9 +154,19 @@ await writeFile(path.join(FIXTURE, '.darwin', 'skills', 'commit-message', 'SKILL
 await writeFile(path.join(OUTSIDE, 'secret.txt'), 'OUTSIDE_SECRET\n', 'utf8');
 await symlink(OUTSIDE, path.join(FIXTURE, 'escape'), 'dir');
 await symlink(path.join(FIXTURE, 'notes.md'), path.join(FIXTURE, 'inside-link'), 'file');
+await writeFile(path.join(FIXTURE, 'İ-Name.md'), '', 'utf8');
 
 const fixture = await scanWorkspacePaths(FIXTURE);
 const offered = fixture.paths.join('|');
+assert('prepared scan candidates are immutable snapshots', Object.isFrozen(fixture.paths));
+for (const query of ['', 'src', 'App', './src/t', 'SKILL', '.darwin', 'notes', 'inside-link', 'İ', 'i\u0307', 'missing']) {
+  nodeAssert.deepEqual(matchWorkspacePaths(fixture.paths, query), matchWorkspacePaths([...fixture.paths], query));
+}
+const mutable = [...fixture.paths];
+matchWorkspacePaths(mutable, 'notes');
+mutable[0] = 'NEW-Unicode-İ.txt'; mutable.reverse();
+nodeAssert.deepEqual(matchWorkspacePaths(mutable, 'new'), ['NEW-Unicode-İ.txt']);
+assert('indexed and fallback matching agree, and mutable caller edits never go stale', true);
 
 assert('the scan completes without a bound', !fixture.truncated && fixture.problem === undefined);
 assert('files and directories are both offered, directories with a trailing slash',
@@ -241,12 +252,29 @@ header('path completion — responsiveness, measured in this repository');
   const query = 'src/tui/InputBox.tsx';
   let worst = 0;
   let matches = 0;
+  const samples: { prefix: string; start: number; end: number; cpuMs: number }[] = [];
+  const garbageCollections: PerformanceEntry[] = [];
+  const observer = new PerformanceObserver(list => { garbageCollections.push(...list.getEntries()); });
+  observer.observe({ entryTypes: ['gc'] });
   for (let length = 0; length <= query.length; length += 1) {
+    const cpu = process.cpuUsage();
     const at = performance.now();
     matches = matchWorkspacePaths(reading.paths, query.slice(0, length)).length;
-    worst = Math.max(worst, performance.now() - at);
+    const end = performance.now();
+    const spent = process.cpuUsage(cpu);
+    samples.push({ prefix: query.slice(0, length), start: at, end, cpuMs: (spent.user + spent.system) / 1000 });
+    worst = Math.max(worst, end - at);
   }
+  // Diagnostics only: no warmup, discarded samples, GC subtraction or retry.
+  await new Promise<void>(resolve => setImmediate(resolve));
+  observer.disconnect();
   console.log(`  per-keystroke match over ${reading.paths.length} candidates: worst ${worst.toFixed(2)}ms, final matches ${matches}`);
+  if (worst >= 5) {
+    for (const sample of samples.filter(sample => sample.end - sample.start >= 5)) {
+      const overlappingGc = garbageCollections.filter(entry => entry.startTime < sample.end && entry.startTime + entry.duration > sample.start);
+      console.log(`  slow matching diagnostic: ${JSON.stringify({ prefix: sample.prefix, wallMs: sample.end - sample.start, cpuMs: sample.cpuMs, overlappingGcMs: overlappingGc.map(entry => entry.duration) })}`);
+    }
+  }
   assert('a keystroke costs under 5ms of matching over the whole candidate list', worst < 5);
   assert('and the last keystroke has narrowed to the file itself', matches === 1);
 }

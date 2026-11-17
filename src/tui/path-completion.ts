@@ -126,6 +126,10 @@ export function pathCompletionQuery(text: string, cursorOffset: number): PathQue
   return { start: index, end: cursor, text: query };
 }
 
+// Prepared only for immutable scan snapshots. Arbitrary/mutable caller arrays
+// remain uncached, so edits or reordering cannot return stale matches.
+const pathMatchIndex = new WeakMap<readonly string[], readonly { lowered: string; basenameStart: number }[]>();
+
 /**
  * Candidates matching a query, best first.
  *
@@ -147,11 +151,16 @@ export function matchWorkspacePaths(candidates: readonly string[], query: string
   const byPath: string[] = [];
   const byBasename: string[] = [];
   const wantsBasenames = !needle.includes('/');
+  const prepared = pathMatchIndex.get(candidates);
 
-  for (const candidate of candidates) {
-    const lowered = candidate.toLowerCase();
+  for (let index = 0; index < candidates.length; index += 1) {
+    const candidate = candidates[index]!;
+    const entry = prepared?.[index];
+    const lowered = entry?.lowered ?? candidate.toLowerCase();
     if (lowered.startsWith(needle)) byPath.push(candidate);
-    else if (wantsBasenames && basename(lowered).startsWith(needle)) byBasename.push(candidate);
+    else if (wantsBasenames && (entry === undefined
+      ? basename(lowered).startsWith(needle)
+      : lowered.startsWith(needle, entry.basenameStart))) byBasename.push(candidate);
   }
   return [...byPath, ...byBasename];
 }
@@ -266,6 +275,13 @@ export async function scanWorkspacePaths(projectRoot: string): Promise<Workspace
   // Depth, not entries: unread directories were reached but never descended into.
   if (!truncated && level.length > 0) truncated = true;
 
+  // Normalize once off the editor's critical path, not once per candidate per key.
+  Object.freeze(paths);
+  pathMatchIndex.set(paths, paths.map(candidate => {
+    const lowered = candidate.toLowerCase();
+    const end = lowered.endsWith('/') ? lowered.length - 1 : lowered.length;
+    return { lowered, basenameStart: lowered.lastIndexOf('/', end - 1) + 1 };
+  }));
   return { paths, entriesSeen, truncated, problem };
 }
 

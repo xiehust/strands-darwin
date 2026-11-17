@@ -1702,25 +1702,27 @@ async function pathCompletion(): Promise<void> {
     tui.send('\u007f');
     await tui.waitFor('❯ notes.md', { timeoutMs: 30_000, settleMs: 400 });
 
-    // Walk beyond the bounded prefix and accept the visibly selected path with Tab.
-    // 13 steps land past the 24-row half-window, hiding rows on both sides.
+    // Select just past the current half-window, hiding rows on both sides. Root
+    // entries notes.md/pad/src precede pad/p01.md; never assume a historic menu cap.
+    const pathSteps = Math.floor(MAX_COMPLETIONS / 2) + 1;
+    const selectedPath = `pad/p${String(pathSteps - 2).padStart(2, '0')}.md`;
     const beforePathWindow = tui.mark();
-    tui.send('\u001b[B'.repeat(13));
-    await tui.waitFor('❯ pad/p11.md', { timeoutMs: 30_000, from: beforePathWindow, settleMs: 400 });
+    tui.send('\u001b[B'.repeat(pathSteps));
+    await tui.waitFor(`❯ ${selectedPath}`, { timeoutMs: 30_000, from: beforePathWindow, settleMs: 400 });
     assert('Down windows an overflowing path menu around the selected candidate',
-      tui.frame.includes('❯ pad/p11.md') && (tui.frame.match(/❯/g)?.length ?? 0) === 1);
+      tui.frame.includes(`❯ ${selectedPath}`) && (tui.frame.match(/❯/g)?.length ?? 0) === 1);
     assert('the path window states omissions above and below truthfully',
       /… \d+ more not shown \(\d+ above, \d+ below\)/.test(tui.frame));
     const beforePathTab = tui.mark();
     tui.send('\t');
-    await tui.waitFor('you> pad/p11.md', { timeoutMs: 30_000, from: beforePathTab, settleMs: 400 });
+    await tui.waitFor(`you> ${selectedPath}`, { timeoutMs: 30_000, from: beforePathTab, settleMs: 400 });
     assert('Tab accepts exactly the visibly selected path candidate',
-      tui.frame.includes('you> pad/p11.md') && !tui.frame.includes('files ('));
+      tui.frame.includes(`you> ${selectedPath}`) && !tui.frame.includes('files ('));
 
     // Reopen and wrap upward to the final full-list path. Enter accepts the same row
     // the marker names, without starting a turn.
     tui.send('\u0015');
-    await tui.waitUntil(() => !tui.frame.includes('files (') && !tui.frame.includes('you> pad/p11.md'), {
+    await tui.waitUntil(() => !tui.frame.includes('files (') && !tui.frame.includes(`you> ${selectedPath}`), {
       timeoutMs: 10_000,
       label: 'path draft cleared before reopening completion',
     });
