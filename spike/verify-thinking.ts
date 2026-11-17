@@ -151,11 +151,11 @@ function decisionTable(): void {
   const anthropic = planThinking({ ...OPUS, provider: 'anthropic', model: 'claude-opus-4-6' }, 'xhigh');
   assert('the anthropic provider plans the same way', anthropic.effective === 'xhigh');
 
-  const openai = planThinking({ ...SONNET, provider: 'openai', model: 'gpt-5' }, 'medium');
-  assert('openai passes low/medium/high through', openai.effective === 'medium');
-  const openaiClamped = planThinking({ ...SONNET, provider: 'openai', model: 'gpt-5' }, 'max');
-  assert('…and clamps what reasoning_effort has no name for', openaiClamped.effective === 'high');
-  assert('…saying so', openaiClamped.problem?.includes('openai') === true);
+  for (const effort of THINKING_EFFORTS) {
+    const openai = planThinking({ ...SONNET, provider: 'openai', model: 'gpt-5.6-sol' }, effort);
+    assert(`openai passes ${effort} through without a provider-wide clamp`,
+      openai.enabled && openai.requested === effort && openai.effective === effort && openai.problem === undefined);
+  }
 }
 
 function requestFields(): void {
@@ -185,6 +185,11 @@ function requestFields(): void {
 
   const openai = openaiThinkingParams(planThinking({ ...SONNET, provider: 'openai', model: 'gpt-5' }, 'low'));
   assert('openai gets reasoning_effort', openai?.['reasoning_effort'] === 'low');
+  const xhigh = planThinking({ ...SONNET, provider: 'openai', model: 'gpt-5.6-sol' }, 'xhigh');
+  assert('chat sends xhigh as flat reasoning_effort',
+    JSON.stringify(openaiThinkingParams(xhigh, 'chat')) === JSON.stringify({ reasoning_effort: 'xhigh' }));
+  assert('responses sends xhigh as nested reasoning.effort',
+    JSON.stringify(openaiThinkingParams(xhigh, 'responses')) === JSON.stringify({ reasoning: { effort: 'xhigh' } }));
   assert(
     'openai gets no thinking/output_config keys',
     openai !== undefined && !('thinking' in openai) && !('output_config' in openai),
@@ -249,6 +254,29 @@ async function liveSwitch(): Promise<void> {
   applyThinkingEffort(nova, { ...SONNET, model: 'us.amazon.nova-pro-v1:0' }, 'high');
   const novaFields = (nova.getConfig() as { additionalRequestFields?: unknown }).additionalRequestFields;
   assert('a non-thinking model is left with no thinking fields', novaFields === undefined);
+
+  const keyEnv = 'DARWIN_TEST_THINKING_OPENAI_KEY';
+  const previousKey = process.env[keyEnv];
+  process.env[keyEnv] = 'sk-test';
+  try {
+    for (const api of ['chat', 'responses'] as const) {
+      const config: AppConfig = {
+        ...SONNET, provider: 'openai', model: 'gpt-5.6-sol', openaiApi: api,
+        apiKeyEnv: keyEnv, thinkingEffort: 'xhigh',
+      };
+      const openai = await createModelFromConfig(config);
+      const params = () => (openai.getConfig() as { params?: Record<string, unknown> }).params;
+      const expected = api === 'chat' ? { reasoning_effort: 'xhigh' } : { reasoning: { effort: 'xhigh' } };
+      assert(`${api} model starts with xhigh unchanged`, JSON.stringify(params()) === JSON.stringify(expected));
+      applyThinkingEffort(openai, config, 'high');
+      const changed = applyThinkingEffort(openai, config, 'xhigh');
+      assert(`${api} /effort xhigh is not clamped or warned`, changed.effective === 'xhigh' && changed.problem === undefined);
+      assert(`${api} /effort sends xhigh to the existing model`, JSON.stringify(params()) === JSON.stringify(expected));
+    }
+  } finally {
+    if (previousKey === undefined) delete process.env[keyEnv];
+    else process.env[keyEnv] = previousKey;
+  }
 }
 
 async function persistence(): Promise<void> {

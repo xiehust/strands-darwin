@@ -202,7 +202,7 @@ session: session-20260814-160833123
 
 The session ID uses lowercase letters, numbers, hyphens, or underscores and must name an existing snapshot for strict selection. `--continue` follows the last-session pointer and is headless-only; with no pointer it starts fresh.
 
-After `permission-mode:`, a run whose thinking effort could not be served as configured writes one `thinking: <problem>` line — for example `thinking: provider "openai" has no xhigh reasoning effort — using high`, or that the model does not support adaptive thinking at all — the same sentence the interactive header shows; a run that got exactly what it asked for writes no such line.
+After `permission-mode:`, a run whose thinking effort could not be served as configured writes one `thinking: <problem>` line — for example `thinking: us.anthropic.claude-sonnet-4-6 does not support xhigh effort (Opus only) — using high`, or that the model does not support adaptive thinking at all — the same sentence the interactive header shows; a run that got exactly what it asked for writes no such line.
 
 Before exit, text mode writes the anchored `usage:` token record (`input`/`output`/`cacheRead`/`cacheWrite`, `-` for unreported), the optional `usage-children:`/`usage-total:` records when children ran, then one `cost:` record pricing the parent buckets at the model's LiteLLM base rates (`total=… … model=<id> pricing=<litellmKey|unavailable|none>`, `-` for anything unknown — see [Sessions and state § Cost](./sessions-and-state.md#cost)), then `model-calls:` when calls were observed.
 

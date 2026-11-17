@@ -95,26 +95,6 @@ const ADAPTIVE_MODEL_MARKERS = [
 const OPUS_TIER_MARKERS = ['claude-opus-4-6', 'claude-opus-4-7', 'claude-opus-5', 'claude-mythos', 'claude-fable'];
 
 /**
- * OpenAI's `reasoning_effort` stops at `high`; the two levels above it have no
- * equivalent, so they are clamped rather than passed through to a 400.
- *
- * Bedrock Mantle is the measured exception — `spike/probe-mantle.ts` against
- * `openai.gpt-5.6-sol` in us-east-1, on the Responses API:
- *
- * | field                        | low | medium | high | xhigh | max |
- * |------------------------------|-----|--------|------|-------|-----|
- * | `reasoning: { effort }`      | ok  | ok     | ok   | ok    | ok  |
- * | `reasoning_effort` (flat)    | 400 Unknown parameter — every level         |
- *
- * Two more facts from the same run, both load-bearing elsewhere: that model
- * refuses `/v1/chat/completions` outright (`api: 'responses'` is mandatory, hence
- * `openaiApi` in the config), and no `reasoningContentDelta` ever reaches the
- * stream — not even with `reasoning.summary` set to `auto` or `detailed` — so
- * effort is spent but never displayed.
- */
-const OPENAI_MAX_EFFORT: ThinkingEffort = 'high';
-
-/**
  * Decides what this run asks the model to think.
  *
  * Pure and cheap, so the model factory, the runtime and the header all call it
@@ -132,19 +112,10 @@ export function planThinking(config: AppConfig, effort = config.thinkingEffort):
       // recognize would be worse than the request error. A non-reasoning model
       // rejects the reasoning field outright — documented on the config field.
       //
-      // Mantle is exempt from the clamp because it was measured not to need it:
-      // `openai.gpt-5.6-sol` accepts the whole ladder through `max` on the
-      // Responses API, and the Bedrock runtime endpoint the same for
-      // `global.openai.gpt-6-astra` (`probe-bedrock-runtime-openai.ts`).
-      // Clamping either anyway would quietly think less than asked.
-      return config.bedrockMantle !== true && config.bedrockRuntime !== true && isAbove(effort, OPENAI_MAX_EFFORT)
-        ? {
-            enabled: true,
-            requested: effort,
-            effective: OPENAI_MAX_EFFORT,
-            problem: `provider "openai" has no ${effort} reasoning effort — using ${OPENAI_MAX_EFFORT}`,
-          }
-        : { enabled: true, requested: effort, effective: effort, problem: undefined };
+      // OpenAI's effort vocabulary includes `xhigh` and `max`; support varies by
+      // model, not provider. Pass the requested level through on native and
+      // compatible endpoints alike rather than imposing a stale `high` ceiling.
+      return { enabled: true, requested: effort, effective: effort, problem: undefined };
   }
 }
 
@@ -203,7 +174,7 @@ export function claudeThinkingFields(plan: ThinkingPlan): JSONValue | undefined 
  * The two APIs spell it differently and neither tolerates the other's spelling:
  * Chat Completions takes a flat `reasoning_effort`, while the Responses API takes
  * a nested `reasoning.effort` and answers `400 Unknown parameter:
- * 'reasoning_effort'` to the flat one — measured on Mantle, see the table above.
+ * 'reasoning_effort'` to the flat one — measured on Mantle (`spike/probe-mantle.ts`).
  */
 export function openaiThinkingParams(
   plan: ThinkingPlan,
@@ -218,9 +189,4 @@ export function openaiThinkingParams(
 /** Narrows an arbitrary value to an effort level. */
 export function isThinkingEffort(value: unknown): value is ThinkingEffort {
   return typeof value === 'string' && (THINKING_EFFORTS as readonly string[]).includes(value);
-}
-
-/** True when `effort` sits above `limit` on the ladder. */
-function isAbove(effort: ThinkingEffort, limit: ThinkingEffort): boolean {
-  return THINKING_EFFORTS.indexOf(effort) > THINKING_EFFORTS.indexOf(limit);
 }

@@ -200,7 +200,7 @@ session: session-20260814-160833123
 
 严格选择会话时，ID 只能含小写字母、数字、连字符或下划线，并且必须对应已有快照。`--continue` 仅用于无头模式，跟随最近会话指针；指针不存在时新建会话。
 
-在 `permission-mode:` 之后，如果配置的思考强度无法按原样生效，会写出一行 `thinking: <problem>`——例如 `thinking: provider "openai" has no xhigh reasoning effort — using high`，或者模型根本不支持 adaptive thinking——与交互模式头部显示的是同一句话；按原样生效的运行不会写这一行。
+在 `permission-mode:` 之后，如果配置的思考强度无法按原样生效，会写出一行 `thinking: <problem>`——例如 `thinking: us.anthropic.claude-sonnet-4-6 does not support xhigh effort (Opus only) — using high`，或者模型根本不支持 adaptive thinking——与交互模式头部显示的是同一句话；按原样生效的运行不会写这一行。
 
 退出前，文本模式会写出锚定的 `usage:` token 记录（`input`/`output`/`cacheRead`/`cacheWrite`，未报告为 `-`），有子代理时再写 `usage-children:`/`usage-total:`，然后写一条 `cost:` 记录，按模型的 LiteLLM 基础单价为父级分桶计价（`total=… … model=<id> pricing=<litellmKey|unavailable|none>`，未知一律为 `-`，见 [会话与状态 § 成本](./sessions-and-state.zh-CN.md#成本)），最后在观察到模型调用时写 `model-calls:`。
 

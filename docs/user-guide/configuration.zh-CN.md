@@ -197,7 +197,7 @@ Claude 4.6+ 使用 adaptive thinking：
 | `xhigh` | 更深的思考；仅 Opus 支持 |
 | `max` | 不限制深度 |
 
-不受支持的级别会降级，而不会让每次请求都失败。例如 Sonnet 的 `xhigh` 会降为 `high`。较旧 Claude 模型会显示不支持 adaptive thinking。OpenAI 接收 `reasoning_effort`；`xhigh` 和 `max` 都会降为 `high`，非推理模型可能拒绝该字段。降级一定会被报告，不会静默发生：交互模式头部和 `/status` 会显示，`darwin doctor` 会注明，无头运行则在 stderr 写一行 `thinking:`（text），或在 `run.started` 上携带 `thinking.requested`/`effective`/`problem` 并附一条 `thinking` warning（json/stream-json）。
+不受支持的级别会降级，而不会让每次请求都失败。例如 Sonnet 的 `xhigh` 会降为 `high`。较旧 Claude 模型会显示不支持 adaptive thinking。OpenAI 原样接收请求的级别，包括 `xhigh` 和 `max`：Chat Completions 使用 `reasoning_effort`，Responses 使用 `reasoning.effort`。支持范围取决于模型；模型可能拒绝不支持的级别或推理字段本身。降级一定会被报告，不会静默发生：交互模式头部和 `/status` 会显示，`darwin doctor` 会注明，无头运行则在 stderr 写一行 `thinking:`（text），或在 `run.started` 上携带 `thinking.requested`/`effective`/`problem` 并附一条 `thinking` warning（json/stream-json）。
 
 使用 OpenAI Responses API（`openaiApi: "responses"`）时，模型的推理会留在对话历史里，并在后续轮次以无状态方式回传给**同一个模型**：GPT 的不透明 `encrypted_content` 原样回传，Kimi K3 的明文推理以 `reasoning_text` 回传。推理永远不会发给别的模型。执行 `/model` 之后，其他模型留下的推理会被丢弃（每丢弃一个块出现一条 `sdk warn` 提示）；Converse、Anthropic 和 Chat Completions 也不会收到 Responses 产生的推理。Kimi K3 推荐走 Bedrock runtime 端点的 Responses 接口，而不是 `bedrock`（Converse）provider：它的模型卡建议使用 OpenAI 兼容接口，而且走 Responses 时 darwin 能显示并回传它的推理：
 

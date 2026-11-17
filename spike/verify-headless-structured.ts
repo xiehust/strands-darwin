@@ -775,7 +775,7 @@ async function thinkingProtocols(): Promise<void> {
     stderr:
       'session: session-fixture\n' +
       'permission-mode: default\n' +
-      'thinking: provider "openai" has no xhigh reasoning effort — using high\n' +
+      'thinking: us.anthropic.claude-sonnet-4-6 does not support xhigh effort (Opus only) — using high\n' +
       'tool bash — bash: printf fixture\n' +
       'tool bash — ok\n' +
       'usage: input=12 output=3 cacheRead=0 cacheWrite=-\n' +
@@ -793,11 +793,11 @@ async function thinkingProtocols(): Promise<void> {
     enabled: true,
     requested: 'xhigh',
     effective: 'high',
-    problem: 'provider "openai" has no xhigh reasoning effort — using high',
+    problem: 'us.anthropic.claude-sonnet-4-6 does not support xhigh effort (Opus only) — using high',
   });
   const terminal = records.at(-1)!;
   nodeAssert.deepEqual(terminal['warnings'], [
-    { source: 'thinking', level: 'warn', message: 'provider "openai" has no xhigh reasoning effort — using high' },
+    { source: 'thinking', level: 'warn', message: 'us.anthropic.claude-sonnet-4-6 does not support xhigh effort (Opus only) — using high' },
   ]);
   nodeAssert.equal(stream.stderr, '');
   assert('stream-json run.started carries requested/effective/problem and the terminal record warns with source thinking', true);
@@ -824,6 +824,22 @@ async function thinkingProtocols(): Promise<void> {
   nodeAssert.deepEqual(plainStarted['thinking'], { enabled: true, requested: 'low', effective: 'low' });
   nodeAssert.equal('warnings' in plain.at(-1)!, false);
   assert('an unclamped run states requested = effective on run.started and adds no warning', true);
+
+  const xhighText = await cli('thinking-xhigh', 'text');
+  nodeAssert.equal(xhighText.code, 0);
+  nodeAssert.equal(xhighText.stderr.includes('thinking:'), false);
+  assert('native OpenAI xhigh emits no thinking clamp on text stderr', true);
+  const xhighStream = await cli('thinking-xhigh', 'stream-json');
+  nodeAssert.equal(xhighStream.code, 0);
+  const xhighRecords = lines(xhighStream.stdout);
+  nodeAssert.deepEqual(xhighRecords.find((record) => record.type === 'run.started')!['thinking'],
+    { enabled: true, requested: 'xhigh', effective: 'xhigh' });
+  nodeAssert.equal('warnings' in xhighRecords.at(-1)!, false);
+  assert('native OpenAI xhigh remains effective=xhigh with no structured warning', true);
+  const xhighJson = await cli('thinking-xhigh', 'json');
+  nodeAssert.equal(xhighJson.code, 0);
+  nodeAssert.equal('warnings' in lines(xhighJson.stdout)[0]!, false);
+  assert('native OpenAI xhigh adds no warning to the json result', true);
 
   // Pure projection: `structuredThinking` collapses whitespace and bounds the problem
   // like every other field (exactly STRUCTURED_FIELD_LIMIT code points, then `truncated`).

@@ -6,7 +6,7 @@ import type { ModelRetryOutcome, RetryWaitState } from '../../src/agent/model-re
 import { NEVER_WITHDRAWN } from '../../src/agent/permission.js';
 import type { AgentRuntime, RuntimeOptions } from '../../src/agent/runtime.js';
 import type { ModelPriceLookup, ModelUsageShare } from '../../src/agent/cost.js';
-import type { ThinkingPlan } from '../../src/agent/thinking.js';
+import { planThinking } from '../../src/agent/thinking.js';
 import type { AppConfig } from '../../src/config.js';
 
 const config: AppConfig = {
@@ -97,25 +97,13 @@ export async function createRuntime(options: RuntimeOptions): Promise<AgentRunti
       mcpPromptProblems: [],
     },
     config,
-    // The resolved thinking plan (issue #10). The default mirrors `thinkingEffort: 'low'`
-    // served as asked, so every existing exact-output assertion doubles as proof that
-    // an unclamped run adds no line; the two problem modes are the three `planThinking`
-    // problem shapes — a clamp (openai `xhigh` → `high`) and thinking off entirely.
-    thinking: (mode === 'thinking-clamped'
-      ? {
-          enabled: true,
-          requested: 'xhigh',
-          effective: 'high',
-          problem: 'provider "openai" has no xhigh reasoning effort — using high',
-        }
+    // Use the real planner so protocol fixtures cannot preserve an obsolete clamp.
+    // Sonnet still clamps xhigh; native OpenAI passes it through without a warning.
+    thinking: mode === 'thinking-clamped'
+      ? planThinking({ ...config, provider: 'bedrock', model: 'us.anthropic.claude-sonnet-4-6' }, 'xhigh')
       : mode === 'thinking-disabled'
-        ? {
-            enabled: false,
-            requested: 'high',
-            effective: undefined,
-            problem: 'fake.headless does not support adaptive thinking — Claude Sonnet 4.6 / Opus 4.6 and later do',
-          }
-        : { enabled: true, requested: 'low', effective: 'low', problem: undefined }) satisfies ThinkingPlan,
+        ? planThinking({ ...config, provider: 'bedrock' }, 'high')
+        : planThinking(config, mode === 'thinking-xhigh' ? 'xhigh' : 'low'),
     usage,
     get runAccounting(): AgentRuntime['runAccounting'] {
       const runtime = this as unknown as AgentRuntime;

@@ -337,8 +337,8 @@ async function providerSwitching(): Promise<void> {
       contextWindowLimit?: number;
     };
     assert(
-      'native openai still sends flat reasoning_effort, clamped to high',
-      JSON.stringify(chatConfig.params) === JSON.stringify({ reasoning_effort: 'high' }),
+      'native openai sends flat reasoning_effort without a provider-wide clamp',
+      JSON.stringify(chatConfig.params) === JSON.stringify({ reasoning_effort: 'max' }),
     );
     assert('other SDK-known OpenAI ids retain SDK metadata', chatConfig.contextWindowLimit === 272_000);
 

@@ -2149,6 +2149,14 @@ accessor is read guardedly (a test double without it adds no field), all additiv
 version unchanged. Checks: `verify-headless-structured.ts` (clamped and disabled fixtures in all
 three protocols, unclamped run adds nothing).
 
+OpenAI planning passes the requested level through, including `xhigh` and `max`, on native,
+Mantle and Bedrock runtime endpoints alike. The OpenAI API vocabulary includes both; support
+varies by model, so a provider-wide `high` ceiling is not a valid capability check. Field
+spelling remains API-specific: Chat Completions uses `reasoning_effort`, Responses uses
+`reasoning.effort`. Claude's measured model-specific clamps are unchanged. Network-free
+checks: `verify-thinking.ts` covers startup and live `/effort` on both API forms;
+`verify-headless-structured.ts` asserts OpenAI `xhigh` stays effective without a warning.
+
 **Reasoning round-trips on the Responses path only to the model that produced it (SER-101).**
 Thinking *params* are unchanged — the Responses form stays `{ reasoning: { effort } }` with no
 `include`, because every Responses model measured returns what replay needs without it
