@@ -303,3 +303,27 @@ Source: origin report S8 (https://kiro.dev/docs/cli/chat/responding/) documents 
 Implement idle human TUI `/reply` without arguments through the existing external-editor handoff, using `latestCompletedAnswer(history)` and prefixing every answer line with `> ` plus a blank reply area. Edited quote lines remain literal text. Valid changed output returns to the composer unsent; only subsequent Enter sends normally. Ctrl+G/Ctrl+X Ctrl+E continue exact-draft editing. No answer/invalid args/over-cap quote seed/unsupported driver/editor error are explicit local outcomes; never truncate silently, enqueue or invoke model/tool. Existing editor caps, no-shell argv, scrubbed env, private storage/cleanup, owner/refusal fences, attachment/stash privacy and failure/unchanged exact-state preservation remain authoritative. Headless/dev-REPL reject locally as TUI-only.
 
 Acceptance: requirement-to-check checklist; real-file and local-model PTY evidence for exact quote bytes and last completed answer selection, unsent-until-Enter/no trajectory prompt, image/stash privacy and unchanged/failure/cap/no-answer/args/busy/modal/queue behavior. Canonical reservation, all built-ins visible in completion/help, driver refusals; full `pnpm typecheck`/`pnpm test`, free `verify-tui.ts completion`, Host `pnpm build` and CLI smoke. Synchronize English/zh-CN README, narrative using-darwin and reference, and existing editor architecture/contract surfaces. No dependencies or permission/runtime/history-policy changes. One fresh developer-supervised child; Host independently accepts before closure and appends the supervision record. Score 11 passes proposal/selection gate; no dependencies.
+
+## SER-133 — Human-only /editor opens a blank unsent prompt through the existing external-editor handoff
+
+- Status: `not-started`
+- Priority: 173
+- Score: 12
+- Importance: 3
+- Architecture fit: 5
+- Evidence confidence: 5
+- Difficulty: 2
+- Risk: 2
+- Origin report: [`research_2026-11-17.md`](../research_2026-11-17.md) (run `13:57:37Z`, rolled `peer`)
+
+### Implementation / acceptance evidence
+
+Not implemented; independent acceptance pending.
+
+### Notes / blockers / abandonment reason
+
+Source: origin report S5/S6/S8 (OpenCode V2, kiro-cli and Aider primary docs) expose `/editor` in addition to editor chords. Current evidence R2–R5: `App.openExternalEditor`, `App.submit`, `BUILTIN_COMMAND_NAMES`, the external-editor architecture section and real-PTY checks. Chords and quoted `/reply` already ship; this adds only a discoverable blank-composition command, not another editor.
+
+Requirement: bare `/editor`, no arguments, explicit local human idle TUI only, opens an empty text seed through the existing VISUAL/EDITOR no-shell bounded private-file/Ink handoff. Do not write the literal command or quote answer context. Valid changed text returns to the composer unsent with image retained; a separate Enter sends normally. Failure/unchanged/invalid arguments preserve the original draft/cursor/image. Preserve stash privacy, caps, cleanup, ownership/refusal fences, and exact-draft Ctrl+G/Ctrl+X Ctrl+E plus quoted `/reply`. No queue, model/tool/network call or new authority. Peer/wake/expansion/model text cannot open it; headless/dev-REPL refuse locally before runtime/send.
+
+Acceptance: requirement-to-test checklist, real-file/local-model PTY proof of empty Unicode/multiline unsent round trip, no durable prompt/model call until Enter, failures/unchanged/args/config/busy/modal/queue/peer/delegation and image/stash behavior. Canonical reservation/description, all built-ins offered by completion/help, parser exactness, headless formats/dev-REPL and authenticated peer refusal. Child full typecheck/test gate; Host explicit commit diff review, independent full gate, free TUI completion, build and built CLI smoke. Sync both README and using-darwin/reference languages plus existing editor architecture. One fresh developer child, Host acceptance and iteration-log receipt before closure. No dependencies/SDK patches/gate/policy changes. Score 12 passes proposal and selection without re-rating; no batch dependencies.
