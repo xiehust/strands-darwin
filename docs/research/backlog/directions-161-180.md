@@ -306,7 +306,7 @@ Acceptance: requirement-to-check checklist; real-file and local-model PTY eviden
 
 ## SER-133 — Human-only /editor opens a blank unsent prompt through the existing external-editor handoff
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 173
 - Score: 12
 - Importance: 3
@@ -318,7 +318,11 @@ Acceptance: requirement-to-check checklist; real-file and local-model PTY eviden
 
 ### Implementation / acceptance evidence
 
-Not implemented; independent acceptance pending.
+Independently accepted `3b6aa89f57e4cdee628d07d4af6974ab4457ba4f` (`feat(tui): add human-only blank editor composition`) from fresh developer child `session-20261117-142642847`, managed task `bg-256640bb-ecae-4251-914f-85aec514bfe5` (exit 0, fully drained). Explicit base `ed2ebded2032a55420c82bcb509da4001122b6a8` to result contains exactly that child commit and no foreign writer. Host reviewed all source/test/doc changes: blank seed and explicit human provenance reuse the shared handoff; keyboard and quoted-reply seeds stay intact.
+
+Host acceptance `bg-2ce2e550-37a0-4b27-821a-3a065193c3f0`, 2026-11-17 15:07:15–15:35:20 UTC, exit 0: `pnpm typecheck`, full `pnpm test` (185 registered suites, count computed from runner), `pnpm tsx spike/verify-tui.ts completion` (85 passed, 0 failed), `pnpm build`, `node dist/src/cli.js --version` (`darwin 0.0.56`), explicit diff check and clean working tree. New real CLI/editor/local-model checks cover exact blank/Unicode bytes, unsent behavior, cursor/image/stash preservation, failure/caps/config, real owner/delegation/wake boundaries, headless pre-construction and dev-REPL refusal; authenticated peer tests and inherited editor/reply suites passed in that gate.
+
+Both README languages, narrative using-darwin and reference languages, and existing editor/prompt-queue architecture were synchronized and independently reviewed. No further docs sync, dependencies, SDK patch, gate/config change or AGENTS growth. First Host acceptance passed; no correction or Host implementation edit. Supervision/spend receipt: [2026-11-17 — SER-133 blank editor supervision](../../iteration-log.md#2026-11-17--ser-133-blank-editor-supervision). Batch exhausted; Score stays 12.
 
 ### Notes / blockers / abandonment reason
 

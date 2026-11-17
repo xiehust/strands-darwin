@@ -4089,3 +4089,46 @@ cost: total=- input=- output=- cacheRead=- cacheWrite=- model=auto pricing=none
 Computed exclusive-bucket sum **8,287,378 tokens**. Every token metric is reported; no unknown token bucket. USD total and all cost components are unreported, carried as unknown rather than zero or estimated. These are worker-process receipts, not Host inference. Existing AgentCore in-flight/interrupted-state diagnostic was not inspected/repaired by this feature; no cloud-health claim.
 
 **Halt: batch exhausted.** SER-132 is independently accepted and done, no unfinished routed record remains, none abandoned. Workspace rollback (2), automatic/background compaction (3), and web workbench (−1) were below-gate report-only candidates. Commit closure records, push current `main` once normally, then verify `git log @{u}..` empty before reporting. No force push, release, tag or publication.
+
+
+## 2026-11-17 — SER-133 blank editor supervision
+
+Rolled `peer` batch from [research_2026-11-17.md](research/research_2026-11-17.md), run `13:57:37Z`. Primary coverage: Claude Code, Codex, DeepSeek harness, OpenCode V2, kiro-cli, PenguinHarness and Aider. SER-133 is the sole accepted direction, Priority 173, Score 12 without re-rating; `/editor` improves command discovery without replacing the existing editor or granting another source execution authority.
+
+Starting source revision `32d8aa35d62dee5ebae3a4470fe1952d1201166e` was clean. Host baseline `bg-318c78fd-26ce-4360-b2c8-96d1aaa1a001` passed `pnpm typecheck && pnpm test`, exit 0 (13:59:09–14:25:57 UTC). Research commit `d7f55b9` and selection commit `ed2ebde` change supervision metadata only, not source. Fresh child launched clean from explicit base `ed2ebded2032a55420c82bcb509da4001122b6a8` through `pnpm tsx src/cli.ts --yolo --context-offload -p`, no model-call ceiling, no stale dist dependency.
+
+Child conversation **`session-20261117-142642847`**; managed task **`bg-256640bb-ecae-4251-914f-85aec514bfe5`**, 14:26:41–15:06:28 UTC, exit 0. Exact session/usage/cost stderr records captured from combined output; incremental and terminal output drained through `hasMore: false`. No provider retry, focused Host correction, child-session reuse or Host implementation edit.
+
+| Milestone | Accepted commit | Independent Host acceptance |
+|---|---|---|
+| Human-only bare /editor opens a blank private seed through the shared handoff; valid changed text returns unsent, with unchanged/failure state preservation and no non-human editor authority | `3b6aa89f57e4cdee628d07d4af6974ab4457ba4f` | Explicit base/result history and complete diff reviewed; only child commit, no foreign writer. Host gate `bg-2ce2e550-37a0-4b27-821a-3a065193c3f0`, 15:07:15–15:35:20 UTC, exit 0: full acceptance, completion, build and clean tree. |
+
+### Independent acceptance details
+
+Host reran `pnpm typecheck && pnpm test && pnpm tsx spike/verify-tui.ts completion && pnpm build && node dist/src/cli.js --version`, with an explicit result-SHA/clean-tree preflight, base/result diff check, `git diff --exit-code` and status. All **185 registered fast suites** completed successfully; the count was computed from `spike/run-tests.ts`. Completion **85 passed, 0 failed**; built CLI **darwin 0.0.56**; working tree clean. One uninterrupted Host gate, no failed acceptance or extra green full-gate repetition.
+
+New `verify-editor-command.ts` proves recognition, argument refusal, reservation, descriptions and every canonical help/completion entry. Real CLI/local-model/editor `verify-editor-command-pty.ts` C2–C8 proves blank seed without an answer, exact Unicode/multiline bytes, no model/durable prompt until a separate Enter, retained image delivery, cursor/unchanged/failure/cap/config preservation, private recoverable stash, owner/search/permission/compaction/session/live-delegation fences, expansion/model/child/task-wake provenance, headless formats before construction, dev-REPL before send, cleanup and shutdown. Authenticated peer `/editor` and argument refusals pass in `verify-collaboration-drivers.ts`; existing `/reply`, external-editor P1–P13 and keyboard PTY regressions pass in the full gate. No live-provider quality assertion or peer-product execution.
+
+Reviewed all 21 changed files: source routing/seed and local driver refusals, discovery caps, tests/fixture/runner, and bilingual docs. No SDK/gate/config/dependency change. Worker-side test setup failures were insufficient compaction history, a terminal-output wait for a silently created factory file, and an incorrectly expected subagent approval; the authenticated-peer fixture also needed its existing single-key clear pattern. Exact-match misses were zero-write and fixed from observed scaffold text. Those failures preceded the worker's final green full gate, not a Host correction. External-editor backups outside the private directory remain outside cleanup scope. An existing AgentCore in-flight/interrupted-state diagnostic was neither inspected nor repaired; no cloud-health claim.
+
+### Documentation wrap-up
+
+Accepted commit synchronizes both READMEs, English/zh-CN narrative `using-darwin` and `reference`, and existing editor/prompt-queue architecture. No additional sync commit or new workflow/spec artifact needed. AGENTS unchanged at **32,638 bytes**. Host owns research/backlog/iteration-log closure; the report records the overly broad append-preparation backlog view as an audit limitation, not evidence for a product claim.
+
+### Worker invocation spend
+
+| Managed task | Outcome | input | output | cacheRead | cacheWrite | Approximate USD total |
+|---|---|---:|---:|---:|---:|---|
+| `bg-256640bb-ecae-4251-914f-85aec514bfe5` | success, exit 0 | 90 | 34,950 | 6,256,209 | 203,080 | unknown |
+| **Aggregate** | one invocation, no retry/correction | **90** | **34,950** | **6,256,209** | **203,080** | **unknown** |
+
+Exact receipts:
+
+```text
+usage: input=90 output=34950 cacheRead=6256209 cacheWrite=203080
+cost: total=- input=- output=- cacheRead=- cacheWrite=- model=auto pricing=none
+```
+
+Computed exclusive-bucket sum **6,494,329 tokens**. All token buckets were reported; cost total and components remain unknown, never zero or inferred from an unpriced `auto` model. Worker-process receipts only, not Host inference.
+
+**Halt: batch exhausted.** SER-133 is independently accepted and done; no unfinished routed record remains and none was abandoned. Ctrl+D changes (5), theme configuration (3) and Mermaid rendering (3) are report-only below-gate rejections. Commit closure artifacts, push current `main` once normally and verify `git log @{u}..` empty before reporting the actual push result. No force push, release, tag or package publication.
