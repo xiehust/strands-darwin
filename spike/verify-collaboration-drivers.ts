@@ -169,6 +169,19 @@ try {
     tui.send('\u0015');
     await tui.waitUntil(() => /(?:^|\n)you>[ \t]*(?:\r?\n|$)/.test(tui.frame), { settleMs: 100 });
     console.log('PASS SER-132 authenticated peer /reply refuses without editor/model authority');
+    for (const text of ['/editor', '/editor argument']) {
+      const editorMark = tui.mark(), editorCalls = requests(root).length;
+      tui.send('retained editor draft');
+      await deliver(local, first.endpoint, text);
+      await tui.waitFor('/editor is TUI-only and requires an explicit local human request', { from: editorMark, settleMs: 200 });
+      assert.equal(requests(root).length, editorCalls, 'authenticated peer /editor is local refusal, not model work');
+      assert(!existsSync(path.join(root, 'reply-editor-launched')), 'peer text never authorizes an editor');
+      assert(tui.frame.includes('you> retained editor draft'), 'peer editor refusal preserves the human composer');
+      tui.send('\u0015');
+      await tui.waitUntil(() => /(?:^|\n)you>[ \t]*(?:\r?\n|$)/.test(tui.frame), { timeoutMs: 10_000, settleMs: 100 });
+    }
+    console.log('PASS SER-133 authenticated peer /editor and arguments refuse without editor/model authority');
+
     const busy = tui.mark(); tui.submit('hold peer queue');
     await tui.waitFor('working…', { from: busy, settleMs: 100 });
     await waitFor(() => requests(root).some(call => call.messages.at(-1)?.content.some((b: any) => b.text === 'hold peer queue')), 'held model call');

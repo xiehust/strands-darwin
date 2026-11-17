@@ -8,7 +8,7 @@ export const COMMANDS_DIRNAME = 'commands';
 export const ARGUMENTS_PLACEHOLDER = '$ARGUMENTS';
 
 /** Commands shown in completion, in their stable display order. */
-export const BUILTIN_COMMAND_NAMES = ['agents', 'clear', 'cloud-memory', 'collaborate', 'compact', 'context', 'copy', 'diff', 'effort', 'exit', 'export', 'goal', 'help', 'init', 'list-agents', 'mcp', 'memory', 'mode', 'model', 'permissions', 'recap', 'rename', 'reply', 'review', 'rewind', 'sessions', 'setup-agentcore-memory', 'status', 'tangent', 'tasks', 'trajectory', 'usage', 'workflow'] as const;
+export const BUILTIN_COMMAND_NAMES = ['agents', 'clear', 'cloud-memory', 'collaborate', 'compact', 'context', 'copy', 'diff', 'editor', 'effort', 'exit', 'export', 'goal', 'help', 'init', 'list-agents', 'mcp', 'memory', 'mode', 'model', 'permissions', 'recap', 'rename', 'reply', 'review', 'rewind', 'sessions', 'setup-agentcore-memory', 'status', 'tangent', 'tasks', 'trajectory', 'usage', 'workflow'] as const;
 
 /**
  * One-phrase completion-row descriptions, total over {@link BUILTIN_COMMAND_NAMES}
@@ -31,6 +31,7 @@ export const BUILTIN_COMMAND_DESCRIPTIONS: Readonly<
   // The last *completed* answer's transcript text, over OSC 52 — so it works over SSH.
   copy: 'copy the last answer to the clipboard',
   diff: 'local Git diff: unstaged, or /diff --staged (idle TUI only)',
+  editor: 'compose a blank prompt in your editor; return unsent (idle TUI only)',
   effort: 'set thinking depth',
   exit: 'quit darwin',
   // Writes a file at the named path, nothing else: no clipboard, no $EDITOR. The

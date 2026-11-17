@@ -27,6 +27,7 @@ import { CONFIG_FILENAME, ConfigError } from './config.js';
 import { WORKFLOW_COMMAND_USAGE, parseWorkflowCommand } from './commands/workflow-command.js';
 import { parseReviewCommand } from './commands/review-command.js';
 import { parseReplyCommand, REPLY_UNSUPPORTED } from './commands/reply-command.js';
+import { parseEditorCommand, EDITOR_UNSUPPORTED } from './commands/editor-command.js';
 import { MCP_CONFIG_FILENAME } from './mcp/registry.js';
 import { mcpPromptLoadedNotice } from './mcp/prompts.js';
 import { DARWIN_DIRNAME } from './paths.js';
@@ -277,6 +278,10 @@ async function main(): Promise<void> {
       if (input === '/exit' || input === '/quit') break;
       if (parseReplyCommand(input) !== undefined) {
         console.log(REPLY_UNSUPPORTED);
+        continue;
+      }
+      if (parseEditorCommand(input) !== undefined) {
+        console.log(EDITOR_UNSUPPORTED);
         continue;
       }
       if (/^\/cloud-memory(?:\s|$)/.test(input)) {

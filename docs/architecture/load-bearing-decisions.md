@@ -3513,11 +3513,28 @@ its cursor, rather than adopting the quote seed. After strict bounded file valid
 raw seed/result equality is unchanged before normalization, so untouched CRLF/control-bearing
 transcript context cannot masquerade as a human edit; changed files still use the existing
 composer policy. The stash/image never enter the file.
-Ctrl+G and its alias keep their exact-draft seed. No new frame participant exists; the 33rd
-built-in raises both help and completion offer caps to 33. Executable receipts are
+Ctrl+G and its alias keep their exact-draft seed. No new frame participant exists; the 34th
+built-in (`/editor`) raises both help and completion offer caps to 34. Executable receipts are
 `verify-reply-command.ts`, `verify-reply-command-pty.ts`, the quote case plus P1–P13 in
 `verify-external-editor.ts`, the unchanged aliases in `verify-external-editor-pty.ts`,
 authenticated peer refusal in `verify-collaboration-drivers.ts`, and `verify-tui.ts completion`.
+
+**`/editor` is a blank seed, not another execution channel** (SER-133;
+`src/commands/editor-command.ts`). Bare, case-sensitive `/editor` uses the same explicit
+human Enter provenance as `/reply`, before queueing or clearing the original composer,
+and calls `openExternalEditor('blank')`. Its seed is exactly `''`: neither the command,
+previous answer, image nor parked stash enters the file. Shared ownership/refusal checks
+run before launch; changed output becomes editable unsent text with the image retained,
+only a separate human Enter sends. Unchanged/failure/arguments preserve exact original
+draft/cursor/image. Peer/wake input, expansions and model text have no handoff authority;
+authenticated exact peer commands refuse locally. Headless all formats refuse before
+runtime/model construction; dev-REPL before send. There is no new queue, scheduler,
+renderer, permission/config or model/tool/network path. The same terminal, no-shell/env,
+storage/caps, validation, cleanup and shutdown contracts below apply unchanged. Receipts:
+`verify-editor-command.ts` C1, `verify-editor-command-pty.ts` C2–C8 (including real live
+background delegation, wake, factory/call/file ledgers and shutdown), authenticated peer
+checks in `verify-collaboration-drivers.ts`, inherited editor/reply suites and free
+`verify-tui.ts completion`.
 
 - **No shell, no guessing.** The variable is parsed into a bounded argv (≤1,024 code points,
   ≤32 words; POSIX-style quotes and backslashes) and spawned with `shell: false`. Unquoted shell
@@ -3603,7 +3620,7 @@ At most 16 entries are admitted per boundary; later arrivals wait for another bo
 Commands (`!` and `/`), images and session-originated wakes are FIFO barriers, never skipped or
 reinterpreted as human text. At idle the existing effect drains remaining entries one at a time
 through ordinary `submit()`, so no-tool turns and ineligible entries retain their prior behavior.
-Human-only editor composition (`/reply`, like the Ctrl+G handoff) refuses locally before
+Human-only editor composition (`/reply` and `/editor`, like the Ctrl+G handoff) refuses locally before
 the queue path; it never becomes a delayed editor invocation. What refuses
 instead of queueing at the ordinary busy guard is a closed set (`refusesToQueue`): `/clear`, `/compact`, `/model`, `/exit`,
 `/quit` — session-replacing commands whose delayed, unprompted execution would be worse than a

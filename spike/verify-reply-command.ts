@@ -51,6 +51,6 @@ try {
   check.ok(MAX_COMPLETIONS >= BUILTIN_COMMAND_NAMES.length);
   const help = formatHelpReport();
   for (const name of BUILTIN_COMMAND_NAMES) check.ok(help.includes(`  /${name} — `), name);
-  check.equal(BUILTIN_COMMAND_NAMES.length, 33);
+  check.equal(BUILTIN_COMMAND_NAMES.length, 34);
 } finally { await rm(root, { recursive: true, force: true }); }
 console.log('SER-132 reply projection, bounds and reservation passed');

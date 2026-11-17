@@ -53,6 +53,7 @@ import {
 } from './headless-protocol.js';
 import { composeHeadlessPrompt, readPipedStdin, type PipedStdin } from './headless-stdin.js';
 import { parseReplyCommand, REPLY_UNSUPPORTED } from './commands/reply-command.js';
+import { parseEditorCommand, EDITOR_UNSUPPORTED } from './commands/editor-command.js';
 
 export type HeadlessOptions = CliOptions & { prompt: string; projectRoot: string };
 
@@ -107,6 +108,7 @@ export async function runHeadlessProcess(
   try {
     prompt = composeHeadlessPrompt(options.prompt, await dependencies.readPipedStdin());
     if (parseReplyCommand(prompt) !== undefined) throw new CliUsageError(REPLY_UNSUPPORTED);
+    if (parseEditorCommand(prompt) !== undefined) throw new CliUsageError(EDITOR_UNSUPPORTED);
     const review = parseReviewCommand(prompt);
     if (review?.invalid) throw new CliUsageError(review.usage);
   } catch (error) {

@@ -10,8 +10,10 @@
  * - `start-job <m>`   → `bash start` of a job that waits for `job-release`, then text.
  * - `<task-notification…` → text acknowledging the wake.
  * - anything else     → `local answer`.
- * Every call appends `{ text, afterTool }` to `editor-model-calls.jsonl` in the cwd: the
- * suite's proof of what (and whether) the model was asked.
+ * SER-133 also holds a real background child until `child-release`, emits literal
+ * `/editor` model text, and counts images on the latest user message.
+ * Every call appends `{ text, afterTool, images }` to `editor-model-calls.jsonl`;
+ * every factory appends to `editor-model-factories.jsonl`: proof of send/construction.
  */
 import { appendFile, access } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -45,7 +47,8 @@ class EditorModel extends Model<BaseModelConfig> {
 
   override async *stream(messages: Message[]): AsyncIterable<ModelStreamEvent> {
     const { text, afterTool } = newestText(messages);
-    await appendFile('editor-model-calls.jsonl', `${JSON.stringify({ text, afterTool })}\n`);
+    const images = messages.filter(message => message.role === 'user').at(-1)?.content.filter(block => block.type === 'imageBlock').length ?? 0;
+    await appendFile('editor-model-calls.jsonl', `${JSON.stringify({ text, afterTool, images })}\n`);
     yield { type: 'modelMessageStartEvent', role: 'assistant' };
     const tool = (name: string, input: Record<string, unknown>, id: string): ModelStreamEvent[] => [
       { type: 'modelContentBlockStartEvent', start: { type: 'toolUseStart', name, toolUseId: id } },
@@ -65,8 +68,14 @@ class EditorModel extends Model<BaseModelConfig> {
       }, `editor-job-${marker}`);
       return;
     }
+    if (!afterTool && text === 'start-delegation') {
+      yield* tool('subagent', { task: 'editor-child-hold', _background_execution: true }, 'editor-delegation');
+      return;
+    }
     let answer = 'local answer';
-    if (text === 'reply-unicode') answer = '第一问 🧪\n\ne\u0301 русский\n\t  code > # literal';
+    if (text === 'editor-child-hold') { await released('child-release'); answer = '/editor'; }
+    else if (text === 'editor-model-text') answer = '/editor';
+    else if (text === 'reply-unicode') answer = '第一问 🧪\n\ne\u0301 русский\n\t  code > # literal';
     else if (text === 'reply-cap') answer = 'a'.repeat(65_533);
     else if (text === 'hold') { await released('hold-release'); answer = 'held answer'; }
     else if (text === 'Please summarize this conversation.') { await released('summary-release'); answer = 'local summary'; }
@@ -82,6 +91,7 @@ class EditorModel extends Model<BaseModelConfig> {
 // Hold real successor construction at the existing model-factory seam. The App
 // must not arm a prefix while /clear awaits its new runtime (no model call here).
 setRuntimeModelFactoryForTest(async () => {
+  await appendFile('editor-model-factories.jsonl', 'constructed\n');
   if (await access('hold-session').then(() => true, () => false)) {
     await appendFile('session-waiting', '');
     await released('session-release');
